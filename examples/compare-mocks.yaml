@@ -1,0 +1,22 @@
+# Example: compare two mock backends with different simulated latency.
+# Try it:
+#   mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}'
+
+backends:
+  - name: fast-mock
+    type: mock
+    delay: 0.1
+    result:
+      note: "simulates a quick, cheap model"
+
+  - name: slow-mock
+    type: mock
+    delay: 1.2
+    result:
+      note: "simulates a slower, higher-quality model"
+
+  - name: flaky-mock
+    type: mock
+    delay: 0.3
+    should_fail: true
+    failure_message: "simulates a backend that is currently down or rate-limited"

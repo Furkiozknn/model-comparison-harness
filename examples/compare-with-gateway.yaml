@@ -1,0 +1,15 @@
+# Example: compare a local mock against a real ai-job-gateway-compatible
+# server. Start a gateway first (e.g. `uv run ai-job-gateway serve` from the
+# ai-job-gateway repo), then:
+#   mch run examples/compare-with-gateway.yaml --input '{"prompt": "a cat riding a bike"}'
+
+backends:
+  - name: local-mock
+    type: mock
+    delay: 0.05
+
+  - name: gateway-mock-generate
+    type: gateway
+    url: http://127.0.0.1:8000
+    capability: mock-generate
+    timeout: 30
