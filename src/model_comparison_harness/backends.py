@@ -107,6 +107,14 @@ class GatewayBackend(Backend):
             deadline = time.monotonic() + self.timeout
             while True:
                 poll_response = await client.get(self.base_url + polling_url)
+                if poll_response.status_code == 410:
+                    # ai-job-gateway's contract returns 410 Gone, not a 200
+                    # body with status="expired", once a terminal job's
+                    # result has passed its TTL. raise_for_status() below
+                    # would turn that into an unhandled httpx.HTTPStatusError
+                    # instead of a clean BackendError -- check for it first.
+                    detail = poll_response.json().get("detail", "job result expired")
+                    raise BackendError(detail)
                 poll_response.raise_for_status()
                 record = poll_response.json()
                 status = record["status"]

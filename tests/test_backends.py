@@ -98,6 +98,25 @@ async def test_gateway_backend_raises_on_submission_rejected():
 
 
 @pytest.mark.asyncio
+async def test_gateway_backend_raises_on_expired_status():
+    """The gateway returns 410 Gone (not a 200 body with status='expired')
+    once a terminal job's result has passed its TTL -- this must surface as
+    a clean BackendError, not an unhandled httpx.HTTPStatusError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "polling_url": "/v1/jobs/j1"})
+        return httpx.Response(410, json={"detail": "this job's result has expired"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    backend = GatewayBackend(
+        "g", url="http://gw.test", capability="mock-generate", poll_interval=0, http_client=client
+    )
+    with pytest.raises(BackendError, match="expired"):
+        await backend.run({})
+
+
+@pytest.mark.asyncio
 async def test_gateway_backend_times_out_if_never_ready():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
