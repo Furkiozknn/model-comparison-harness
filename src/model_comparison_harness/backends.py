@@ -18,6 +18,16 @@ from typing import Any, Optional
 
 import httpx
 
+from .gateway_poll import (
+    GatewayHTTPError,
+    classify_poll_body,
+    expired_detail,
+    is_expired_poll_response,
+    parse_submission,
+    resolve_polling_url,
+    submit_url,
+)
+
 
 class BackendError(Exception):
     """Raised by a backend's run() to report a failure. You don't have to
@@ -99,31 +109,30 @@ class GatewayBackend(Backend):
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
         client = self._http_client or httpx.AsyncClient()
         try:
-            response = await client.post(f"{self.base_url}/v1/{self.capability}", json=params)
-            if response.status_code >= 400:
-                raise BackendError(f"submission rejected ({response.status_code}): {response.text}")
-            polling_url = response.json()["polling_url"]
+            response = await client.post(
+                submit_url(self.base_url, self.capability), json=params, timeout=self.timeout
+            )
+            body_json = response.json() if response.status_code < 400 else None
+            try:
+                _job_id, polling_url = parse_submission(response.status_code, body_json, response.text)
+            except GatewayHTTPError as exc:
+                raise BackendError(f"submission rejected ({exc.status_code}): {exc.body_text}") from exc
 
             deadline = time.monotonic() + self.timeout
             while True:
-                poll_response = await client.get(self.base_url + polling_url)
-                if poll_response.status_code == 410:
-                    # ai-job-gateway's contract returns 410 Gone, not a 200
-                    # body with status="expired", once a terminal job's
-                    # result has passed its TTL. raise_for_status() below
-                    # would turn that into an unhandled httpx.HTTPStatusError
-                    # instead of a clean BackendError -- check for it first.
-                    detail = poll_response.json().get("detail", "job result expired")
-                    raise BackendError(detail)
+                poll_response = await client.get(
+                    resolve_polling_url(self.base_url, polling_url), timeout=self.timeout
+                )
+                if is_expired_poll_response(poll_response.status_code):
+                    raise BackendError(expired_detail(poll_response.json()))
                 poll_response.raise_for_status()
-                record = poll_response.json()
-                status = record["status"]
-                if status == "ready":
-                    return record["result"]
-                if status in ("error", "expired"):
-                    raise BackendError(record.get("error") or f"job ended with status {status!r}")
+                outcome = classify_poll_body(poll_response.json())
+                if outcome.ready:
+                    return outcome.result
+                if outcome.terminal:
+                    raise BackendError(outcome.error_message)
                 if time.monotonic() >= deadline:
-                    raise BackendError(f"did not finish within {self.timeout}s (last status: {status!r})")
+                    raise BackendError(f"did not finish within {self.timeout}s (last status: {outcome.status!r})")
                 await asyncio.sleep(self.poll_interval)
         finally:
             if self._owns_client:
