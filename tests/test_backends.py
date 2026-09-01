@@ -117,6 +117,59 @@ async def test_gateway_backend_raises_on_expired_status():
 
 
 @pytest.mark.asyncio
+async def test_gateway_backend_wraps_http_error_status_during_poll_as_backend_error():
+    # A genuine HTTP-level error mid-poll (proxy/gateway hiccup returning a
+    # raw 500, not a job-level {"status": "error"} body) must surface as the
+    # same clean BackendError shape as every other failure path here, not a
+    # raw httpx.HTTPStatusError.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "polling_url": "/v1/jobs/j1"})
+        return httpx.Response(500, text="upstream hiccup")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    backend = GatewayBackend(
+        "g", url="http://gw.test", capability="mock-generate", poll_interval=0, http_client=client
+    )
+    with pytest.raises(BackendError, match="poll failed \\(500\\)"):
+        await backend.run({})
+
+
+@pytest.mark.asyncio
+async def test_gateway_backend_poll_timeout_shrinks_toward_the_deadline_not_reset_each_time():
+    # Regression: each poll request used to get the *full* self.timeout
+    # again instead of the time remaining until the overall deadline, which
+    # could let total wall-clock time run to ~2x the configured timeout.
+    seen_timeouts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "polling_url": "/v1/jobs/j1"})
+        return httpx.Response(200, json={"status": "processing"})
+
+    async def capturing_get(url, *, timeout=None, **kwargs):
+        seen_timeouts.append(timeout)
+        return await real_get(url, timeout=timeout, **kwargs)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    real_get = client.get
+    client.get = capturing_get
+
+    backend = GatewayBackend(
+        "g", url="http://gw.test", capability="mock-generate", timeout=0.1, poll_interval=0.02, http_client=client
+    )
+    with pytest.raises(BackendError, match="did not finish"):
+        await backend.run({})
+
+    assert len(seen_timeouts) >= 2
+    # Every poll's timeout must be <= the configured overall timeout, and
+    # they must shrink (or hold near zero) over the course of the run - never
+    # jump back up to the full 0.1s on a later poll.
+    assert all(t <= 0.1 + 1e-6 for t in seen_timeouts)
+    assert seen_timeouts == sorted(seen_timeouts, reverse=True)
+
+
+@pytest.mark.asyncio
 async def test_gateway_backend_times_out_if_never_ready():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":

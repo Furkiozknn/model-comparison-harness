@@ -120,12 +120,23 @@ class GatewayBackend(Backend):
 
             deadline = time.monotonic() + self.timeout
             while True:
+                # Each poll gets only the time remaining until `deadline`, not
+                # the full self.timeout again - otherwise one slow poll
+                # request near the end of the window can push total wall-clock
+                # time to roughly 2x the configured timeout before the
+                # deadline check below ever runs.
+                remaining = max(0.01, deadline - time.monotonic())
                 poll_response = await client.get(
-                    resolve_polling_url(self.base_url, polling_url), timeout=self.timeout
+                    resolve_polling_url(self.base_url, polling_url), timeout=remaining
                 )
                 if is_expired_poll_response(poll_response.status_code):
                     raise BackendError(expired_detail(poll_response.json()))
-                poll_response.raise_for_status()
+                try:
+                    poll_response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    # Same clean BackendError shape the submission path
+                    # already uses, instead of a raw httpx exception message.
+                    raise BackendError(f"poll failed ({poll_response.status_code}): {poll_response.text}") from exc
                 outcome = classify_poll_body(poll_response.json())
                 if outcome.ready:
                     return outcome.result
