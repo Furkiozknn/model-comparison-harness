@@ -10,11 +10,16 @@ from dataclasses import asdict
 from typing import Any
 
 from .config import ConfigError, load_backends_from_file
+from .grading import build_judge_chain
 from .runner import ComparisonResult, run_comparison
 
 
 def _format_table(results: list[ComparisonResult]) -> str:
+    graded = any(r.grade is not None for r in results)
     headers = ["backend", "status", "latency (s)", "summary"]
+    if graded:
+        headers.append("grade")
+
     rows = []
     for r in results:
         if r.status == "success":
@@ -23,7 +28,14 @@ def _format_table(results: list[ComparisonResult]) -> str:
             summary = f"ERROR: {r.error}"
         if len(summary) > 80:
             summary = summary[:77] + "..."
-        rows.append([r.backend, r.status, f"{r.latency_seconds:.3f}", summary])
+        row = [r.backend, r.status, f"{r.latency_seconds:.3f}", summary]
+        if graded:
+            if r.grade is None:
+                row.append("-")
+            else:
+                grade_cell = f"{'PASS' if r.grade.passed else 'FAIL'} {r.grade.score:.2f} - {r.grade.reason}"
+                row.append(grade_cell[:60] + "..." if len(grade_cell) > 60 else grade_cell)
+        rows.append(row)
 
     widths = [max(len(h), *(len(row[i]) for row in rows)) if rows else len(h) for i, h in enumerate(headers)]
     lines = []
@@ -38,6 +50,13 @@ def _format_table(results: list[ComparisonResult]) -> str:
     if fastest_success:
         lines.append("")
         lines.append(f"fastest successful backend: {fastest_success.backend} ({fastest_success.latency_seconds:.3f}s)")
+
+    if graded:
+        best_graded = max(
+            (r for r in results if r.grade is not None), key=lambda r: r.grade.score, default=None
+        )
+        if best_graded:
+            lines.append(f"highest-graded backend: {best_graded.backend} ({best_graded.grade.score:.2f})")
 
     n_success = sum(1 for r in results if r.status == "success")
     n_error = len(results) - n_success
@@ -70,7 +89,17 @@ def _cmd_run(args: argparse.Namespace) -> None:
         print("error: --input must be a JSON object", file=sys.stderr)
         raise SystemExit(1)
 
-    results = asyncio.run(run_comparison(backends, params))
+    if args.rubric is not None and not build_judge_chain():
+        print(
+            "error: --rubric given but no judge model is configured "
+            "(set NVIDIA_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY, GEMINI_API_KEY, "
+            "or CEREBRAS_API_KEY) - checked once up front so a whole run of "
+            "real backend calls isn't wasted only to find grading unavailable after.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    results = asyncio.run(run_comparison(backends, params, rubric=args.rubric))
 
     if args.json:
         print(json.dumps([asdict(r) for r in results], indent=2))
@@ -94,6 +123,15 @@ def main() -> None:
     )
     run_parser.add_argument("config")
     run_parser.add_argument("--input", required=True, help="JSON object, e.g. '{\"prompt\": \"a cat\"}'")
+    run_parser.add_argument(
+        "--rubric",
+        default=None,
+        help=(
+            "plain-language grading criteria, e.g. 'mentions a red sneaker and no watermark text'. "
+            "If given, every successful result is also scored by a judge model (llm-rubric style) - "
+            "requires one of NVIDIA_API_KEY/GROQ_API_KEY/MISTRAL_API_KEY/GEMINI_API_KEY/CEREBRAS_API_KEY."
+        ),
+    )
     run_parser.add_argument("--json", action="store_true", help="print machine-readable JSON instead of a table")
     run_parser.add_argument(
         "--fail-on-error", action="store_true", help="exit non-zero if any backend errored"

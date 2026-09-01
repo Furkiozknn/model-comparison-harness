@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from .backends import Backend, BackendError, GatewayBackend, HttpBackend, MockBackend
 from .config import ConfigError, load_backends_from_dict, load_backends_from_file
+from .grading import GradeResult, GradingUnavailable, build_judge_chain, grade_result
 from .runner import ComparisonResult, run_comparison
 
 __all__ = [
@@ -27,6 +28,10 @@ __all__ = [
     "load_backends_from_file",
     "ComparisonResult",
     "run_comparison",
+    "GradeResult",
+    "GradingUnavailable",
+    "build_judge_chain",
+    "grade_result",
 ]
 
 __version__ = "0.1.0"
