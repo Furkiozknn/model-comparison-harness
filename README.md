@@ -75,6 +75,32 @@ uv run mch run config.yaml --input '{"prompt": "..."}' --timeout 10     # hard p
 
 Every result — table, JSON, and CSV alike — carries an `error_type` alongside `error` for failures: the failing exception's class name (`"BackendError"`, `"TimeoutError"`, or whatever a custom backend raises), so a script can branch on the *kind* of failure without parsing the message string. `--timeout` is enforced by the harness itself, independently of any timeout a backend already applies internally (e.g. `gateway`'s and `http`'s own `timeout:` config field) — it exists specifically to bound a backend that doesn't time out on its own, whether that's a bug in a custom `Backend` subclass or a server that simply never responds.
 
+## Model-graded scoring (`--rubric`)
+
+Latency and success/failure only tell you which backend *answered* — not which one answered *well*. `--rubric` adds an `llm-rubric`-style pass, in the spirit of [promptfoo](https://github.com/promptfoo/promptfoo)'s model-graded assertions (design idea only — no promptfoo code here): every successful result gets sent to a judge model alongside your plain-language criteria, which returns a pass/fail verdict, a 0–1 score, and a one-sentence reason.
+
+```bash
+uv sync --extra grading   # pulls in litellm - not a base dependency, opt-in
+uv run mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}' \
+    --rubric "mentions a bike and reads like a complete sentence"
+```
+
+```
+backend      status   latency (s)  summary                                                       grade
+-----------  -------  -----------  ------------------------------------------------------------  ----------------------------------
+fast-mock    success  0.101        {"note": "simulates a quick, cheap model", "params_receive...  FAIL 0.20 - no mention of a bike
+slow-mock    success  1.201        {"note": "simulates a slower, higher-quality model", "param...  FAIL 0.20 - no mention of a bike
+flaky-mock   error    0.301        ERROR: simulates a backend that is currently down or rate-l...  -
+
+fastest successful backend: fast-mock (0.101s)
+highest-graded backend: fast-mock (0.20)
+2 succeeded, 1 failed
+```
+
+The judge is a configurable free-tier chain — NVIDIA NIM first, then Groq/Mistral/Gemini/Cerebras, whichever has an API key set (`NVIDIA_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `GEMINI_API_KEY` / `CEREBRAS_API_KEY`) — the same provider list [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already proved out, reused here as an independent implementation rather than a shared dependency between the two repos. If `--rubric` is given but none of those keys are set, `mch run` fails immediately with a clear error instead of running every backend for real and only discovering grading was unavailable afterward. A failed backend call is never graded — there's no result to judge. Grading latency is measured and reported separately; it never leaks into `latency_seconds`, which stays exactly what it was before this feature existed.
+
+**v1 limitation:** the rubric is a CLI flag / library kwarg only, not yet a YAML config field — natural to add once there's a real need for a comparison config to travel with its own fixed grading criteria.
+
 ## Using it as a library
 
 ```python
@@ -85,7 +111,13 @@ backends = load_backends_from_file("examples/compare-mocks.yaml")
 results = asyncio.run(run_comparison(backends, {"prompt": "a cat riding a bike"}, timeout=10))
 for r in results:
     print(r.backend, r.status, r.latency_seconds, r.result or r.error, r.error_type)
+
+results = asyncio.run(run_comparison(backends, {"prompt": "a cat riding a bike"}, rubric="mentions a bike"))
+for r in results:
+    print(r.backend, r.status, r.latency_seconds, r.result or r.error, r.grade)
 ```
+
+`rubric` is optional and keyword-only; omit it and comparisons behave exactly as before this feature existed.
 
 ## Writing a new backend type
 

@@ -103,7 +103,8 @@ def test_run_csv_output(monkeypatch, capsys, config_file):
     out = capsys.readouterr().out
     reader = csv.DictReader(io.StringIO(out))
     rows = list(reader)
-    assert reader.fieldnames == ["backend", "status", "latency_seconds", "result", "error", "error_type"]
+    assert reader.fieldnames == ["backend", "status", "latency_seconds", "result", "error", "error_type", "grade"]
+    assert all(row["grade"] == "" for row in rows)  # no --rubric, so no grade cell
     assert {row["backend"] for row in rows} == {"fast", "broken"}
     fast_row = next(r for r in rows if r["backend"] == "fast")
     assert fast_row["status"] == "success"
@@ -137,3 +138,52 @@ def test_run_timeout_reports_slow_backend_as_error(monkeypatch, capsys, tmp_path
     assert slow_row["status"] == "error"
     assert slow_row["error_type"] == "TimeoutError"
     assert fast_row["status"] == "success"
+
+# --- --rubric --------------------------------------------------------------
+
+def test_run_with_rubric_but_no_judge_configured_exits_nonzero_before_running_backends(
+    monkeypatch, capsys, config_file
+):
+    for env in ("NVIDIA_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY", "CEREBRAS_API_KEY"):
+        monkeypatch.delenv(env, raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--rubric", "anything"])
+
+    assert exc_info.value.code == 1
+    assert "no judge model is configured" in capsys.readouterr().err
+
+
+def test_run_with_empty_string_rubric_still_fails_fast_when_no_judge_configured(
+    monkeypatch, capsys, config_file
+):
+    # `--rubric ""` is a truthy-looking edge case: args.rubric == "" is
+    # falsy, but the user explicitly passed the flag, so the same fail-fast
+    # check must still fire rather than silently running every backend for
+    # real and only reporting "grading unavailable" per row afterward.
+    for env in ("NVIDIA_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY", "CEREBRAS_API_KEY"):
+        monkeypatch.delenv(env, raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--rubric", ""])
+
+    assert exc_info.value.code == 1
+    assert "no judge model is configured" in capsys.readouterr().err
+
+
+def test_run_with_rubric_and_configured_judge_shows_grade_column(monkeypatch, capsys, config_file):
+    monkeypatch.setenv("GROQ_API_KEY", "g-key")
+
+    async def fake_grade_result(output, rubric):
+        from model_comparison_harness.grading import GradeResult
+
+        return GradeResult(passed=True, score=0.8, reason="looks right")
+
+    monkeypatch.setattr("model_comparison_harness.runner.grade_result", fake_grade_result)
+
+    _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--rubric", "should be fast"])
+
+    out = capsys.readouterr().out
+    assert "grade" in out
+    assert "PASS 0.80" in out
+    assert "highest-graded backend: fast" in out
