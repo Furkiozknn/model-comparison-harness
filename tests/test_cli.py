@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from pathlib import Path
 
@@ -95,6 +97,47 @@ def test_run_fail_on_error_exits_nonzero_when_any_backend_errors(monkeypatch, ca
 def test_run_without_fail_on_error_exits_zero_even_with_a_failing_backend(monkeypatch, capsys, config_file):
     _run(monkeypatch, ["run", str(config_file), "--input", "{}"])  # should not raise SystemExit
 
+
+def test_run_csv_output(monkeypatch, capsys, config_file):
+    _run(monkeypatch, ["run", str(config_file), "--input", '{"prompt": "hi"}', "--csv"])
+    out = capsys.readouterr().out
+    reader = csv.DictReader(io.StringIO(out))
+    rows = list(reader)
+    assert reader.fieldnames == ["backend", "status", "latency_seconds", "result", "error", "error_type", "grade"]
+    assert all(row["grade"] == "" for row in rows)  # no --rubric, so no grade cell
+    assert {row["backend"] for row in rows} == {"fast", "broken"}
+    fast_row = next(r for r in rows if r["backend"] == "fast")
+    assert fast_row["status"] == "success"
+    assert json.loads(fast_row["result"])["note"] == "fast one"
+    broken_row = next(r for r in rows if r["backend"] == "broken")
+    assert broken_row["status"] == "error"
+    assert broken_row["error"] == "simulated failure"
+
+
+def test_run_json_and_csv_are_mutually_exclusive(monkeypatch, capsys, config_file):
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--json", "--csv"])
+    assert "not allowed" in capsys.readouterr().err
+
+
+def test_run_timeout_reports_slow_backend_as_error(monkeypatch, capsys, tmp_path):
+    slow_config = tmp_path / "slow.yaml"
+    slow_config.write_text(
+        "backends:\n"
+        "  - name: slow\n"
+        "    type: mock\n"
+        "    delay: 0.3\n"
+        "  - name: fast\n"
+        "    type: mock\n"
+        "    delay: 0\n"
+    )
+    _run(monkeypatch, ["run", str(slow_config), "--input", "{}", "--json", "--timeout", "0.05"])
+    data = json.loads(capsys.readouterr().out)
+    slow_row = next(r for r in data if r["backend"] == "slow")
+    fast_row = next(r for r in data if r["backend"] == "fast")
+    assert slow_row["status"] == "error"
+    assert slow_row["error_type"] == "TimeoutError"
+    assert fast_row["status"] == "success"
 
 # --- --rubric --------------------------------------------------------------
 

@@ -61,6 +61,43 @@ async def test_run_comparison_one_failure_does_not_affect_others():
     assert bad.result is None
 
 
+@pytest.mark.asyncio
+async def test_run_comparison_failure_carries_error_type():
+    backends = [MockBackend("bad", delay_seconds=0, should_fail=True, failure_message="boom")]
+    results = await run_comparison(backends, {})
+    assert results[0].error_type == "BackendError"
+
+
+@pytest.mark.asyncio
+async def test_run_comparison_success_has_no_error_type():
+    backends = [MockBackend("good", delay_seconds=0)]
+    results = await run_comparison(backends, {})
+    assert results[0].error_type is None
+
+
+@pytest.mark.asyncio
+async def test_run_comparison_timeout_reports_error_without_blocking_others():
+    # A backend slower than the harness `timeout` is reported as a timeout
+    # error - and, critically, a fast sibling backend's own result is
+    # unaffected (concurrency + independent failure isolation still hold).
+    backends = [
+        MockBackend("slow", delay_seconds=0.3),
+        MockBackend("fast", delay_seconds=0),
+    ]
+    results = await run_comparison(backends, {}, timeout=0.05)
+    slow, fast = results
+    assert slow.status == "error"
+    assert slow.error_type == "TimeoutError"
+    assert "0.05" in slow.error
+    assert fast.status == "success"
+
+
+@pytest.mark.asyncio
+async def test_run_comparison_no_timeout_by_default_lets_slow_backend_finish():
+    backends = [MockBackend("slow", delay_seconds=0.05)]
+    results = await run_comparison(backends, {})
+    assert results[0].status == "success"
+
 # --- rubric / model-graded scoring -----------------------------------------
 
 @pytest.mark.asyncio

@@ -46,7 +46,7 @@ fastest successful backend: fast-mock (0.101s)
 2 succeeded, 1 failed
 ```
 
-One backend erroring never hides the other results — the whole point is seeing every backend's outcome side by side, including the failures.
+One backend erroring never hides the other results — the whole point is seeing every backend's outcome side by side, including the failures. The same goes for a backend that just *hangs*: pass `--timeout SECONDS` and a backend that exceeds it is reported as a timeout error instead of blocking every other backend's result forever (see "The CLI" below).
 
 ## Backend types
 
@@ -64,10 +64,16 @@ See `examples/compare-with-gateway.yaml` for a config comparing a local mock aga
 uv run mch validate config.yaml
 # OK: 3 backend(s) configured: fast-mock, slow-mock, flaky-mock
 
-uv run mch run config.yaml --input '{"prompt": "..."}'          # table output
-uv run mch run config.yaml --input '{"prompt": "..."}' --json    # machine-readable
-uv run mch run config.yaml --input '{"prompt": "..."}' --fail-on-error   # exit 1 if any backend errored (useful in CI)
+uv run mch run config.yaml --input '{"prompt": "..."}'                  # table output
+uv run mch run config.yaml --input '{"prompt": "..."}' --json           # machine-readable, one object per backend
+uv run mch run config.yaml --input '{"prompt": "..."}' --csv            # CSV, e.g. `--csv > results.csv` for a spreadsheet
+uv run mch run config.yaml --input '{"prompt": "..."}' --fail-on-error  # exit 1 if any backend errored (useful in CI)
+uv run mch run config.yaml --input '{"prompt": "..."}' --timeout 10     # hard per-backend ceiling enforced by the harness
 ```
+
+`--json` and `--csv` are mutually exclusive (pick one machine-readable format at a time); with neither, you get the human-readable table.
+
+Every result — table, JSON, and CSV alike — carries an `error_type` alongside `error` for failures: the failing exception's class name (`"BackendError"`, `"TimeoutError"`, or whatever a custom backend raises), so a script can branch on the *kind* of failure without parsing the message string. `--timeout` is enforced by the harness itself, independently of any timeout a backend already applies internally (e.g. `gateway`'s and `http`'s own `timeout:` config field) — it exists specifically to bound a backend that doesn't time out on its own, whether that's a bug in a custom `Backend` subclass or a server that simply never responds.
 
 ## Model-graded scoring (`--rubric`)
 
@@ -102,6 +108,10 @@ import asyncio
 from model_comparison_harness import load_backends_from_file, run_comparison
 
 backends = load_backends_from_file("examples/compare-mocks.yaml")
+results = asyncio.run(run_comparison(backends, {"prompt": "a cat riding a bike"}, timeout=10))
+for r in results:
+    print(r.backend, r.status, r.latency_seconds, r.result or r.error, r.error_type)
+
 results = asyncio.run(run_comparison(backends, {"prompt": "a cat riding a bike"}, rubric="mentions a bike"))
 for r in results:
     print(r.backend, r.status, r.latency_seconds, r.result or r.error, r.grade)
@@ -128,7 +138,14 @@ uv sync --group dev
 uv run pytest
 ```
 
-Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless.
+Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 44 tests as of this writing.
+
+## Limitations
+
+- **Latency includes this process's own overhead** (event loop scheduling, JSON encode/decode) on top of each backend's real network/inference time — fine for relative "which is faster" comparisons between backends run side by side in the same process, not a substitute for a dedicated load-testing tool if you need absolute numbers.
+- **One input per run.** `mch run` fires a single `--input` payload at every backend once; there's no built-in sweep over a list of prompts or repeated trials for statistical confidence (score with `--json`/`--csv` output piped into your own script if you need that).
+- **No retries.** A backend that fails or times out is reported as a single failed row, not retried — matching this tool's job (see how backends behave *right now*, including failures) rather than a production request pipeline's job.
+- **`gateway` and `http` backends make real HTTP calls** to whatever `url:` you configure; nothing stops you from pointing a config at an untrusted or unintended endpoint, so treat comparison configs with the same care as any other file that names a URL to POST arbitrary `--input` JSON to.
 
 ## License
 
