@@ -52,6 +52,8 @@ One backend erroring never hides the other results — the whole point is seeing
 
 ## Backend types
 
+<img src="assets/fanout.svg" alt="The same input is sent to every backend concurrently, each under a hard harness-enforced timeout. A backend that fails or times out becomes an error row carrying its own latency and an error_type such as TimeoutError, so one broken backend never hides the others and scripts can branch on the failure kind without matching error strings." width="100%">
+
 | Type | What it does | Required fields |
 |---|---|---|
 | `mock` | Configurable delay + fixed (or forced-failing) result. Zero network, zero dependencies — for tests, demos, and dry-running a config's shape. | — |
@@ -143,6 +145,8 @@ uv run pytest
 Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 44 tests as of this writing.
 
 ## Limitations
+
+<img src="assets/limits.svg" alt="What the harness answers - which backend is faster side by side, which fail and with what error kind, and what each returned - versus what it does not: absolute latency figures, statistical confidence from a single run, retry behaviour, or whether the URL in a config is the one you intended." width="100%">
 
 - **Latency includes this process's own overhead** (event loop scheduling, JSON encode/decode) on top of each backend's real network/inference time — fine for relative "which is faster" comparisons between backends run side by side in the same process, not a substitute for a dedicated load-testing tool if you need absolute numbers.
 - **One input per run.** `mch run` fires a single `--input` payload at every backend once; there's no built-in sweep over a list of prompts or repeated trials for statistical confidence (score with `--json`/`--csv` output piped into your own script if you need that).
