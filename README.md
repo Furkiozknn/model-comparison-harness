@@ -1,3 +1,5 @@
+![model-comparison-harness - one request, N backends, latency and outcome side by side](assets/banner.svg)
+
 # model-comparison-harness
 
 Run the same request against multiple generative-model backends **concurrently** and compare latency, success/failure, and results side by side — a small CLI (`mch`) for the "which model should this capability actually route to" question.

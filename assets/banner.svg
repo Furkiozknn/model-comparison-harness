@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320" role="img" aria-label="model-comparison-harness - run the same request against several backends and compare">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="55%" stop-color="#1d1a12"/>
+      <stop offset="100%" stop-color="#0f1626"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f0b429"/>
+      <stop offset="50%" stop-color="#4c8dff"/>
+      <stop offset="100%" stop-color="#a371f7"/>
+    </linearGradient>
+    <linearGradient id="markAccent" gradientUnits="userSpaceOnUse" x1="72" y1="108" x2="146" y2="190">
+      <stop offset="0%" stop-color="#f0b429"/>
+      <stop offset="60%" stop-color="#4c8dff"/>
+      <stop offset="100%" stop-color="#a371f7"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#f0b429" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#f0b429" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="320" fill="url(#bg)"/>
+  <circle cx="960" cy="150" r="230" fill="url(#glow)"/>
+  <rect x="0" y="0" width="1200" height="4" fill="url(#accent)"/>
+
+  <g>
+    <g font-family="ui-monospace, monospace" font-size="13" fill="#8b98a9">
+      <text x="812" y="106">backend A</text><text x="812" y="158">backend B</text><text x="812" y="210">backend C</text>
+    </g>
+    <g>
+      <rect x="906" y="90" width="188" height="20" rx="10" fill="#1a2740"/>
+      <rect x="906" y="90" width="168" height="20" rx="10" fill="#6cb6ff"/>
+      <rect x="906" y="142" width="188" height="20" rx="10" fill="#1a2740"/>
+      <rect x="906" y="142" width="120" height="20" rx="10" fill="#f0c674"/>
+      <rect x="906" y="194" width="188" height="20" rx="10" fill="#1a2740"/>
+      <rect x="906" y="194" width="62" height="20" rx="10" fill="#f2777a"/>
+    </g>
+    <path d="M1118 74 L1118 232" stroke="#a371f7" stroke-width="2" stroke-dasharray="6 5"/>
+    <g font-family="ui-monospace, monospace" font-size="12">
+      <text x="1084" y="106" fill="#6cb6ff">ok</text>
+      <text x="1036" y="158" fill="#f0c674">ok</text>
+      <text x="978" y="210" fill="#f2777a">error</text>
+    </g>
+  </g>
+
+  <g transform="translate(72,108)" fill="none" stroke="url(#markAccent)" stroke-width="7" stroke-linecap="round">
+    <path d="M10 68 L10 18"/>
+    <path d="M34 68 L34 34"/>
+    <path d="M58 68 L58 8"/>
+  </g>
+
+  <text x="176" y="128" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="38" font-weight="700" fill="#e6edf3">model-comparison-harness</text>
+  <text x="178" y="172" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif" font-size="23" fill="#8b98a9">One request, N backends, latency and outcome side by side.</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif" font-size="14.5" font-weight="600">
+    <g transform="translate(178,204)">
+      <rect width="217" height="34" rx="17" fill="#2a2211" stroke="#7a5f1f"/>
+      <text x="108" y="22" text-anchor="middle" fill="#f0c674">same request, N backends</text>
+    </g>
+    <g transform="translate(409,204)">
+      <rect width="158" height="34" rx="17" fill="#0f2130" stroke="#1f4f7a"/>
+      <text x="79" y="22" text-anchor="middle" fill="#6cb6ff">latency + success</text>
+    </g>
+    <g transform="translate(581,204)">
+      <rect width="161" height="34" rx="17" fill="#1c1730" stroke="#4a3b7a"/>
+      <text x="80" y="22" text-anchor="middle" fill="#b394f7">table / JSON / CSV</text>
+    </g>
+  </g>
+
+  <text x="178" y="272" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#5c6b7f">62 tests &#183; concurrent dispatch &#183; error_type kept, never averaged away &#183; CLI: mch &#183; MIT</text>
+</svg>
