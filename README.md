@@ -142,7 +142,7 @@ uv sync --group dev
 uv run pytest
 ```
 
-Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 62 tests (`uv run pytest --collect-only -q` prints the current count).
+Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 74 tests (`uv run pytest --collect-only -q` prints the current count).
 
 ## Limitations
 
