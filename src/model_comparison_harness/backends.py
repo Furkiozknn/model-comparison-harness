@@ -39,9 +39,6 @@ class BackendError(Exception):
 class Backend(ABC):
     name: str = ""
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-
     @abstractmethod
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
         """Do the work. Return a JSON-serializable result, or raise."""

@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .backends import Backend, GatewayBackend, HttpBackend, MockBackend
+
+# gateway_poll.submit_url builds the request as f"{base_url}/v1/{capability}"
+# with no encoding or escaping - an unrestricted capability string is a
+# path/query injection into that request. Confirmed exploitable in the
+# sibling ai-workflow-engine, which guards the same input with this same
+# shape: "../admin/delete-all" escapes the /v1/ namespace entirely via
+# dot-segment normalization, and "images?admin=true" injects arbitrary query
+# params. Restricting to this shape closes that off before it ever reaches
+# submit_url.
+_CAPABILITY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ConfigError(Exception):
@@ -29,10 +40,19 @@ def _build_gateway(name: str, spec: dict[str, Any]) -> GatewayBackend:
     for field in ("url", "capability"):
         if field not in spec:
             raise ConfigError(f"backend {name!r} (type=gateway): missing required field {field!r}")
+    capability = spec["capability"]
+    # fullmatch, not match: in Python `$` also matches just before a trailing
+    # newline, which would let "images\n" through into the URL path.
+    if not isinstance(capability, str) or not _CAPABILITY_RE.fullmatch(capability):
+        raise ConfigError(
+            f"backend {name!r} (type=gateway): 'capability' {capability!r} must match "
+            f"{_CAPABILITY_RE.pattern} (it becomes a URL path segment - no '/', '?', "
+            "'.', or whitespace allowed)"
+        )
     return GatewayBackend(
         name,
         url=spec["url"],
-        capability=spec["capability"],
+        capability=capability,
         timeout=spec.get("timeout", 60.0),
         poll_interval=spec.get("poll_interval", 0.3),
     )

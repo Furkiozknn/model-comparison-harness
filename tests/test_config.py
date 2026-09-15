@@ -75,6 +75,41 @@ def test_gateway_backend_missing_required_field_raises():
         load_backends_from_dict({"backends": [{"name": "g", "type": "gateway", "url": "http://x"}]})
 
 
+@pytest.mark.parametrize("capability", [
+    "../admin/delete-all",     # escapes the /v1/ namespace via dot-segments
+    "images?admin=true",       # injects query parameters
+    "images#frag",             # truncates the path
+    "images/extra",            # a second path segment
+    "im ages",                 # whitespace in a URL path
+    "images\n",                # `$` alone would let this through
+    "",
+    123,
+])
+def test_gateway_capability_that_would_rewrite_the_url_is_refused(capability):
+    """`capability` is interpolated straight into f"{base_url}/v1/{capability}".
+
+    Anything but a single plain path segment is a path- or query-injection
+    into the submission request, which is why the sibling ai-workflow-engine
+    guards the same input with the same shape.
+    """
+    with pytest.raises(ConfigError, match="must match"):
+        load_backends_from_dict(
+            {"backends": [
+                {"name": "g", "type": "gateway", "url": "http://x", "capability": capability}
+            ]}
+        )
+
+
+@pytest.mark.parametrize("capability", ["echo", "mock-generate", "text_to_image", "v2"])
+def test_a_plain_capability_still_loads(capability):
+    backends = load_backends_from_dict(
+        {"backends": [
+            {"name": "g", "type": "gateway", "url": "http://x", "capability": capability}
+        ]}
+    )
+    assert backends[0].capability == capability
+
+
 def test_http_backend_missing_url_raises():
     with pytest.raises(ConfigError, match="missing required field 'url'"):
         load_backends_from_dict({"backends": [{"name": "h", "type": "http"}]})
