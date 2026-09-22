@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0.0",
+  "id": "model-comparison-harness",
+  "owner": "Furkiozknn",
+  "repository": "https://github.com/Furkiozknn/model-comparison-harness",
+  "homepage": null,
+  "releases": "https://github.com/Furkiozknn/model-comparison-harness/releases",
+  "status": "active",
+  "category": "developer-tool",
+  "platform": [
+    "cli",
+    "library"
+  ],
+  "primary_language": "Python",
+  "technologies": [
+    "Python 3.11+",
+    "CLI: mch"
+  ],
+  "version": "0.1.0",
+  "license": "MIT",
+  "topics": [
+    "benchmarking",
+    "cli",
+    "developer-tools",
+    "evaluation",
+    "generative-ai",
+    "latency",
+    "llm",
+    "llm-evaluation",
+    "model-comparison",
+    "observability",
+    "python",
+    "routing"
+  ],
+  "summary": "Fire one request at N model backends at once and read latency, success and output side by side. --rubric adds a judge model returning pass/fail, a 0-1 score and a reason, so you compare quality too, not just who answered first. Every failure carries an error_type a script can branch on. CLI: mch. 74 tests.",
+  "key_features": [
+    "Fires one request at N model backends at once and puts latency, success and output side by side",
+    "--rubric adds a judge model returning pass/fail, a 0-1 score and a reason, so quality is compared too",
+    "Every failure carries an error_type a script can branch on",
+    "Usable as a library, with a documented path for writing a new backend type"
+  ],
+  "media": {
+    "hero": "assets/banner.svg",
+    "screenshots": [],
+    "gifs": [],
+    "videos": []
+  },
+  "tests": {
+    "count": 74,
+    "source": "`74 passed`",
+    "measured": "2026-09-15"
+  },
+  "ci": {
+    "workflows": [
+      "ci.yml",
+      "yayinla.yml"
+    ],
+    "badge": "https://github.com/Furkiozknn/model-comparison-harness/actions/workflows/ci.yml/badge.svg"
+  },
+  "docs": {
+    "readme": "README.md",
+    "changelog": null,
+    "roadmap": null,
+    "security": "SECURITY.md",
+    "contributing": "CONTRIBUTING.md",
+    "license_file": "LICENSE"
+  },
+  "social": {
+    "headline": "One prompt, N providers, one report - and a judge model scoring each answer.",
+    "hashtags": [
+      "llm",
+      "evaluation",
+      "python",
+      "devtools"
+    ],
+    "primary_link": "https://github.com/Furkiozknn/model-comparison-harness"
+  },
+  "provenance": {
+    "generated_at": "2026-09-22",
+    "generator": "ghcc/gen_meta.py",
+    "rule": "mechanical fields read from the repository and the GitHub API; editorial fields hand-written and reviewed; no field is generated from a guess"
+  }
+}
