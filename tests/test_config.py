@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -132,3 +133,81 @@ def test_shipped_example_configs_are_valid():
     for example in (repo_root / "examples").glob("*.yaml"):
         backends = load_backends_from_file(example)
         assert len(backends) >= 1
+
+
+# --- field-level validation -------------------------------------------------
+# Each of these used to pass `mch validate` ("OK: ...") and then either crash
+# `mch run` with a traceback or silently run with a default value.
+
+
+@pytest.mark.parametrize(
+    "spec, message",
+    [
+        ({"type": "mock", "dealy": 3}, "unknown field 'dealy' - did you mean 'delay'"),
+        ({"type": "http", "url": "http://x", "timout": 5}, "unknown field 'timout' - did you mean 'timeout'"),
+        ({"type": "mock", "delay": "fast"}, "'delay' must be a number >= 0"),
+        ({"type": "mock", "delay": -1}, "'delay' must be a number >= 0"),
+        ({"type": "mock", "delay": True}, "'delay' must be a number >= 0"),
+        ({"type": "mock", "result": [1, 2]}, "'result' must be a mapping"),
+        ({"type": "mock", "should_fail": "yes please"}, "'should_fail' must be true or false"),
+        ({"type": "mock", "failure_message": 42}, "'failure_message' must be a string"),
+        ({"type": "http", "url": 42}, "'url' must be a string"),
+        ({"type": "http", "url": "api.test/generate"}, "absolute http:// or https:// URL"),
+        ({"type": "http", "url": "file:///etc/passwd"}, "absolute http:// or https:// URL"),
+        ({"type": "http", "url": "http://x", "timeout": 0}, "'timeout' must be a number > 0"),
+        ({"type": "http", "url": "http://x", "timeout": -1}, "'timeout' must be a number > 0"),
+        ({"type": "http", "url": "http://x", "headers": "nope"}, "'headers' must be a mapping of string to string"),
+        ({"type": "http", "url": "http://x", "headers": {"X-Retries": 3}}, "'headers' must be a mapping"),
+        ({"type": "http", "url": "http://x", "max_response_bytes": 0}, "'max_response_bytes' must be a number > 0"),
+        (
+            {"type": "gateway", "url": "http://x", "capability": "echo", "poll_interval": 0},
+            "'poll_interval' must be a number > 0",
+        ),
+    ],
+)
+def test_invalid_field_values_are_rejected_at_load_time(spec, message):
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        load_backends_from_dict({"backends": [{"name": "b", **spec}]})
+
+
+def test_non_string_name_is_rejected():
+    with pytest.raises(ConfigError, match="'name' must be a string"):
+        load_backends_from_dict({"backends": [{"name": 5, "type": "mock"}]})
+
+
+def test_non_string_type_is_reported_as_unknown_type_not_a_crash():
+    with pytest.raises(ConfigError, match="unknown type"):
+        load_backends_from_dict({"backends": [{"name": "b", "type": ["mock"]}]})
+
+
+def test_valid_optional_fields_still_load():
+    backends = load_backends_from_dict(
+        {
+            "backends": [
+                {"name": "m", "type": "mock", "delay": 0, "should_fail": False, "failure_message": "x"},
+                {
+                    "name": "h",
+                    "type": "http",
+                    "url": "https://api.test/v1",
+                    "headers": {"Authorization": "Bearer t"},
+                    "timeout": 5,
+                    "max_response_bytes": 1024,
+                },
+                {"name": "g", "type": "gateway", "url": "http://x", "capability": "echo", "poll_interval": 0.1},
+            ]
+        }
+    )
+    assert backends[1].max_response_bytes == 1024
+    assert backends[1].timeout == 5.0
+
+
+def test_load_backends_from_file_directory_is_a_config_error(tmp_path: Path):
+    with pytest.raises(ConfigError, match="not a file"):
+        load_backends_from_file(tmp_path)
+
+
+def test_load_backends_from_file_non_utf8_is_a_config_error(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(ConfigError, match="not UTF-8"):
+        load_backends_from_file(path)

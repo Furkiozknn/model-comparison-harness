@@ -182,3 +182,73 @@ async def test_gateway_backend_times_out_if_never_ready():
     )
     with pytest.raises(BackendError, match="did not finish within"):
         await backend.run({})
+
+
+# --- http backend: size cap, redirects, non-JSON -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_http_backend_rejects_body_larger_than_max_response_bytes():
+    async def stream():
+        for _ in range(100):
+            yield b"x" * 1024
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # No Content-Length: the cap has to hold while streaming, too.
+        return httpx.Response(200, content=stream())
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    backend = HttpBackend("h", url="http://api.test/generate", max_response_bytes=4096, http_client=client)
+    with pytest.raises(BackendError, match="exceeded max_response_bytes=4096"):
+        await backend.run({})
+
+
+@pytest.mark.asyncio
+async def test_http_backend_rejects_declared_oversized_content_length_before_reading():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"{}" * 100)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    backend = HttpBackend("h", url="http://api.test/generate", max_response_bytes=10, http_client=client)
+    with pytest.raises(BackendError, match="Content-Length 200 exceeds max_response_bytes=10"):
+        await backend.run({})
+
+
+@pytest.mark.asyncio
+async def test_http_backend_reports_redirect_instead_of_following_it():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={"location": "http://elsewhere.test/"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    backend = HttpBackend("h", url="http://api.test/generate", http_client=client)
+    with pytest.raises(BackendError, match=r"redirected \(302 -> http://elsewhere.test/\)"):
+        await backend.run({})
+    assert seen == ["http://api.test/generate"]
+
+
+@pytest.mark.asyncio
+async def test_http_backend_non_json_body_is_a_backend_error_with_context():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>maintenance</html>", headers={"content-type": "text/html"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    backend = HttpBackend("h", url="http://api.test/generate", http_client=client)
+    with pytest.raises(BackendError, match="not JSON.*text/html.*maintenance"):
+        await backend.run({})
+
+
+@pytest.mark.asyncio
+async def test_http_backend_clips_huge_error_bodies():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="E" * 5000)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    backend = HttpBackend("h", url="http://api.test/generate", http_client=client)
+    with pytest.raises(BackendError) as exc_info:
+        await backend.run({})
+    message = str(exc_info.value)
+    assert len(message) < 700
+    assert "4500 more chars" in message

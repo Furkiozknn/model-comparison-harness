@@ -12,6 +12,7 @@ Python dependency.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Optional
@@ -27,6 +28,23 @@ from .gateway_poll import (
     resolve_polling_url,
     submit_url,
 )
+
+
+# An `http` backend's response body is read into memory in full, so a
+# misbehaving or hostile endpoint could otherwise stream an unbounded body at
+# us for as long as the timeout allows. 10 MiB is far above any JSON a model
+# API returns for one request; raise it per backend with `max_response_bytes`.
+DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+
+# Error bodies are quoted into `error`, which lands in the table, the JSON and
+# the CSV. An HTML error page or a stack trace should not become a 50 KB cell.
+_MAX_ERROR_BODY_CHARS = 500
+
+
+def _clip(text: str) -> str:
+    if len(text) <= _MAX_ERROR_BODY_CHARS:
+        return text
+    return text[:_MAX_ERROR_BODY_CHARS] + f"... [{len(text) - _MAX_ERROR_BODY_CHARS} more chars]"
 
 
 class BackendError(Exception):
@@ -113,7 +131,7 @@ class GatewayBackend(Backend):
             try:
                 _job_id, polling_url = parse_submission(response.status_code, body_json, response.text)
             except GatewayHTTPError as exc:
-                raise BackendError(f"submission rejected ({exc.status_code}): {exc.body_text}") from exc
+                raise BackendError(f"submission rejected ({exc.status_code}): {_clip(exc.body_text)}") from exc
 
             deadline = time.monotonic() + self.timeout
             while True:
@@ -133,7 +151,9 @@ class GatewayBackend(Backend):
                 except httpx.HTTPStatusError as exc:
                     # Same clean BackendError shape the submission path
                     # already uses, instead of a raw httpx exception message.
-                    raise BackendError(f"poll failed ({poll_response.status_code}): {poll_response.text}") from exc
+                    raise BackendError(
+                        f"poll failed ({poll_response.status_code}): {_clip(poll_response.text)}"
+                    ) from exc
                 outcome = classify_poll_body(poll_response.json())
                 if outcome.ready:
                     return outcome.result
@@ -160,22 +180,59 @@ class HttpBackend(Backend):
         url: str,
         headers: Optional[dict[str, str]] = None,
         timeout: float = 60.0,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         http_client: Optional[httpx.AsyncClient] = None,
     ) -> None:
         self.name = name
         self.url = url
         self.headers = headers or {}
         self.timeout = timeout
+        self.max_response_bytes = max_response_bytes
         self._http_client = http_client
         self._owns_client = http_client is None
 
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
-        client = self._http_client or httpx.AsyncClient()
+        # follow_redirects=False (httpx's default, stated here on purpose): a
+        # redirect would re-send the request - possibly to another host - so it
+        # is reported instead of followed.
+        client = self._http_client or httpx.AsyncClient(follow_redirects=False)
         try:
-            response = await client.post(self.url, json=params, headers=self.headers, timeout=self.timeout)
+            async with client.stream(
+                "POST", self.url, json=params, headers=self.headers, timeout=self.timeout
+            ) as response:
+                body = await self._read_capped(response)
+            text = body.decode(response.encoding or "utf-8", errors="replace")
+            if response.is_redirect:
+                location = response.headers.get("location", "?")
+                raise BackendError(
+                    f"request was redirected ({response.status_code} -> {location}); "
+                    "redirects are not followed - point 'url' at the final address"
+                )
             if response.status_code >= 400:
-                raise BackendError(f"request failed ({response.status_code}): {response.text}")
-            return response.json()
+                raise BackendError(f"request failed ({response.status_code}): {_clip(text)}")
+            try:
+                return json.loads(body)
+            except ValueError as exc:
+                raise BackendError(
+                    f"response was not JSON ({response.status_code}, "
+                    f"content-type {response.headers.get('content-type', '?')!r}): {_clip(text)}"
+                ) from exc
         finally:
             if self._owns_client:
                 await client.aclose()
+
+    async def _read_capped(self, response: httpx.Response) -> bytes:
+        limit = self.max_response_bytes
+        declared = response.headers.get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > limit:
+            raise BackendError(f"response too large: Content-Length {declared} exceeds max_response_bytes={limit}")
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in response.aiter_bytes():
+            size += len(chunk)
+            if size > limit:
+                # Stop reading here; leaving the `async with` closes the
+                # connection instead of draining the rest of the body.
+                raise BackendError(f"response too large: exceeded max_response_bytes={limit} while reading")
+            chunks.append(chunk)
+        return b"".join(chunks)

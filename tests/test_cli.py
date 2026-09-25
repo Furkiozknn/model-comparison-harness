@@ -187,3 +187,79 @@ def test_run_with_rubric_and_configured_judge_shows_grade_column(monkeypatch, ca
     assert "grade" in out
     assert "PASS 0.80" in out
     assert "highest-graded backend: fast" in out
+
+
+# --- exit codes and argument validation --------------------------------------
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "nan", "inf", "soon"])
+def test_run_rejects_timeout_that_is_not_a_positive_number(monkeypatch, capsys, config_file, value):
+    with pytest.raises(SystemExit) as exc_info:
+        _run(monkeypatch, ["run", str(config_file), "--input", "{}", f"--timeout={value}"])
+    assert exc_info.value.code == 2  # argparse usage error
+    assert "--timeout" in capsys.readouterr().err
+
+
+def test_validate_reports_bad_field_as_invalid_not_a_traceback(monkeypatch, capsys, tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text("backends:\n  - name: a\n    type: mock\n    delay: fast\n")
+    with pytest.raises(SystemExit) as exc_info:
+        _run(monkeypatch, ["validate", str(path)])
+    assert exc_info.value.code == 1
+    assert "INVALID: backend 'a' (type=mock): 'delay' must be a number >= 0" in capsys.readouterr().err
+
+
+def test_ctrl_c_exits_130_without_a_traceback(monkeypatch, capsys, config_file):
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("model_comparison_harness.cli.run_comparison", interrupted)
+    with pytest.raises(SystemExit) as exc_info:
+        _run(monkeypatch, ["run", str(config_file), "--input", "{}"])
+    assert exc_info.value.code == 130
+    assert capsys.readouterr().err.strip() == "interrupted"
+
+
+# --- output schema -------------------------------------------------------------
+# Scripts parse --json/--csv. Renaming, adding or reordering a field is a
+# breaking change for them, so it has to show up as a failing test here.
+
+_RESULT_FIELDS = ["backend", "status", "latency_seconds", "result", "error", "error_type", "grade"]
+
+
+def test_json_output_schema_is_pinned(monkeypatch, capsys, config_file):
+    monkeypatch.setenv("GROQ_API_KEY", "g-key")
+
+    async def fake_grade_result(output, rubric):
+        from model_comparison_harness.grading import GradeResult
+
+        return GradeResult(passed=True, score=0.5, reason="ok")
+
+    monkeypatch.setattr("model_comparison_harness.runner.grade_result", fake_grade_result)
+    _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--json", "--rubric", "r"])
+    rows = json.loads(capsys.readouterr().out)
+
+    assert [list(row) for row in rows] == [_RESULT_FIELDS, _RESULT_FIELDS]
+    ok, failed = rows
+    assert ok["status"] == "success" and isinstance(ok["latency_seconds"], float)
+    assert ok["error"] is None and ok["error_type"] is None
+    assert ok["grade"] == {"passed": True, "score": 0.5, "reason": "ok"}
+    assert failed["status"] == "error" and failed["result"] is None and failed["grade"] is None
+    assert failed["error"] == "simulated failure" and failed["error_type"] == "BackendError"
+
+
+def test_csv_grade_cell_is_the_same_json_object_as_in_json_output(monkeypatch, capsys, config_file):
+    monkeypatch.setenv("GROQ_API_KEY", "g-key")
+
+    async def fake_grade_result(output, rubric):
+        from model_comparison_harness.grading import GradeResult
+
+        return GradeResult(passed=False, score=0.25, reason="meh")
+
+    monkeypatch.setattr("model_comparison_harness.runner.grade_result", fake_grade_result)
+    _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--csv", "--rubric", "r"])
+    reader = csv.DictReader(io.StringIO(capsys.readouterr().out))
+    rows = list(reader)
+    assert reader.fieldnames == _RESULT_FIELDS
+    assert json.loads(rows[0]["grade"]) == {"passed": False, "score": 0.25, "reason": "meh"}
+    assert rows[1]["grade"] == "" and rows[1]["error_type"] == "BackendError"

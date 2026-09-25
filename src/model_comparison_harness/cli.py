@@ -7,6 +7,7 @@ import asyncio
 import csv
 import io
 import json
+import math
 import sys
 from dataclasses import asdict, fields
 from typing import Any
@@ -14,6 +15,19 @@ from typing import Any
 from .config import ConfigError, load_backends_from_file
 from .grading import build_judge_chain
 from .runner import ComparisonResult, run_comparison
+
+
+def _positive_seconds(value: str) -> float:
+    """argparse type for --timeout: a finite number > 0. `0`, negatives and
+    `nan` used to be accepted and turned every backend into an instant
+    "did not respond within 0.0s" timeout row."""
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number of seconds, got {value!r}") from None
+    if not (math.isfinite(seconds) and seconds > 0):
+        raise argparse.ArgumentTypeError(f"must be a number greater than 0, got {value!r}")
+    return seconds
 
 
 def _format_csv(results: list[ComparisonResult]) -> str:
@@ -61,10 +75,11 @@ def _format_table(results: list[ComparisonResult]) -> str:
 
     widths = [max(len(h), *(len(row[i]) for row in rows)) if rows else len(h) for i, h in enumerate(headers)]
     lines = []
-    lines.append("  ".join(h.ljust(w) for h, w in zip(headers, widths)))
+    # rstrip: padding the last column only leaves trailing spaces behind.
+    lines.append("  ".join(h.ljust(w) for h, w in zip(headers, widths)).rstrip())
     lines.append("  ".join("-" * w for w in widths))
     for row in rows:
-        lines.append("  ".join(cell.ljust(w) for cell, w in zip(row, widths)))
+        lines.append("  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip())
 
     fastest_success = min(
         (r for r in results if r.status == "success"), key=lambda r: r.latency_seconds, default=None
@@ -166,7 +181,7 @@ def main() -> None:
     )
     run_parser.add_argument(
         "--timeout",
-        type=float,
+        type=_positive_seconds,
         default=None,
         metavar="SECONDS",
         help=(
@@ -178,7 +193,14 @@ def main() -> None:
     run_parser.set_defaults(func=_cmd_run)
 
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        # asyncio.run() has already cancelled every in-flight backend task
+        # (and each backend's `finally` closed its HTTP client); only the
+        # traceback is left to suppress. 130 = 128 + SIGINT, the shell norm.
+        print("interrupted", file=sys.stderr)
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":

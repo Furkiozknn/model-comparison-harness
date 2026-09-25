@@ -19,7 +19,9 @@ contracts, never a shared Python dependency), just the same well-tested
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import os
 import secrets
 from dataclasses import dataclass
@@ -66,6 +68,28 @@ _RUBRIC_SYSTEM_PROMPT = (
     'number from 0.0 to 1.0, "reason": "one short sentence"}. No markdown '
     "code fences, no other text before or after the JSON."
 )
+
+
+# The harness's --timeout bounds each backend call, not grading. Without its
+# own ceiling a judge provider that never answers would hang the whole run
+# after every backend had already finished. This covers the whole fallback
+# chain for one result, not each provider in it.
+JUDGE_TIMEOUT_SECONDS = 120.0
+
+
+def _parse_verdict(content: Any) -> GradeResult:
+    text = content.strip() if isinstance(content, str) else content
+    # Models asked for bare JSON still wrap it in a ```json fence often
+    # enough that rejecting it would lose otherwise valid verdicts.
+    if isinstance(text, str) and text.startswith("```") and text.endswith("```"):
+        text = text[3:-3]
+        if text.lower().startswith("json"):
+            text = text[4:]
+    data = json.loads(text)
+    score = float(data["score"])
+    if not (math.isfinite(score) and 0.0 <= score <= 1.0):
+        raise ValueError(f"score {score!r} outside 0.0-1.0")
+    return GradeResult(passed=bool(data["pass"]), score=score, reason=str(data.get("reason", "")))
 
 
 def build_judge_chain() -> list[dict[str, Any]]:
@@ -123,16 +147,23 @@ async def grade_result(output: Any, rubric: str) -> GradeResult:
             ),
         },
     ]
-    response = await litellm.acompletion(
-        messages=messages,
-        max_tokens=200,
-        fallbacks=fallbacks or None,
-        **primary,
-    )
+    try:
+        response = await asyncio.wait_for(
+            litellm.acompletion(
+                messages=messages,
+                max_tokens=200,
+                fallbacks=fallbacks or None,
+                **primary,
+            ),
+            timeout=JUDGE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        return GradeResult(
+            passed=False, score=0.0, reason=f"judge did not respond within {JUDGE_TIMEOUT_SECONDS:g}s"
+        )
     content = response.choices[0].message.content
     try:
-        data = json.loads(content)
-        return GradeResult(passed=bool(data["pass"]), score=float(data["score"]), reason=str(data.get("reason", "")))
+        return _parse_verdict(content)
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         # The judge didn't return clean JSON - degrade to an ungraded,
         # clearly-labeled result rather than crashing the whole comparison
