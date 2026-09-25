@@ -35,7 +35,7 @@ class ConfigError(Exception):
 _COMMON_FIELDS = {"name", "type"}
 _ALLOWED_FIELDS: dict[str, set[str]] = {
     "mock": _COMMON_FIELDS | {"delay", "result", "should_fail", "failure_message"},
-    "gateway": _COMMON_FIELDS | {"url", "capability", "timeout", "poll_interval"},
+    "gateway": _COMMON_FIELDS | {"url", "capability", "timeout", "poll_interval", "max_response_bytes"},
     "http": _COMMON_FIELDS | {"url", "headers", "timeout", "max_response_bytes"},
 }
 
@@ -53,6 +53,15 @@ def _number(name: str, spec: dict[str, Any], field: str, default: float, *, allo
         return float(value)
     bound = ">= 0" if allow_zero else "> 0"
     raise ConfigError(f"{_where(name, spec)}: {field!r} must be a number {bound}, got {value!r}")
+
+
+def _max_bytes(name: str, spec: dict[str, Any]) -> int:
+    """A whole number of bytes > 0. `1.5` used to be accepted and silently
+    truncated to a 1-byte limit."""
+    value = spec.get("max_response_bytes", DEFAULT_MAX_RESPONSE_BYTES)
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    raise ConfigError(f"{_where(name, spec)}: 'max_response_bytes' must be a whole number > 0, got {value!r}")
 
 
 def _string(name: str, spec: dict[str, Any], field: str, default: Optional[str] = None) -> str:
@@ -112,6 +121,7 @@ def _build_gateway(name: str, spec: dict[str, Any]) -> GatewayBackend:
         capability=capability,
         timeout=_number(name, spec, "timeout", 60.0, allow_zero=False),
         poll_interval=_number(name, spec, "poll_interval", 0.3, allow_zero=False),
+        max_response_bytes=_max_bytes(name, spec),
     )
 
 
@@ -126,13 +136,12 @@ def _build_http(name: str, spec: dict[str, Any]) -> HttpBackend:
             f"{_where(name, spec)}: 'headers' must be a mapping of string to string "
             "(quote numbers, e.g. X-Retries: \"3\")"
         )
-    max_bytes = _number(name, spec, "max_response_bytes", DEFAULT_MAX_RESPONSE_BYTES, allow_zero=False)
     return HttpBackend(
         name,
         url=_url(name, spec),
         headers=headers,
         timeout=_number(name, spec, "timeout", 60.0, allow_zero=False),
-        max_response_bytes=int(max_bytes),
+        max_response_bytes=_max_bytes(name, spec),
     )
 
 

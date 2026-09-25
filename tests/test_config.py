@@ -158,7 +158,13 @@ def test_shipped_example_configs_are_valid():
         ({"type": "http", "url": "http://x", "timeout": -1}, "'timeout' must be a number > 0"),
         ({"type": "http", "url": "http://x", "headers": "nope"}, "'headers' must be a mapping of string to string"),
         ({"type": "http", "url": "http://x", "headers": {"X-Retries": 3}}, "'headers' must be a mapping"),
-        ({"type": "http", "url": "http://x", "max_response_bytes": 0}, "'max_response_bytes' must be a number > 0"),
+        ({"type": "http", "url": "http://x", "max_response_bytes": 0}, "'max_response_bytes' must be a whole number > 0"),
+        # Used to be truncated by int() to a 1-byte limit that failed every run.
+        ({"type": "http", "url": "http://x", "max_response_bytes": 1.5}, "'max_response_bytes' must be a whole number > 0"),
+        (
+            {"type": "gateway", "url": "http://x", "capability": "echo", "max_response_bytes": "big"},
+            "'max_response_bytes' must be a whole number > 0",
+        ),
         (
             {"type": "gateway", "url": "http://x", "capability": "echo", "poll_interval": 0},
             "'poll_interval' must be a number > 0",
@@ -211,3 +217,13 @@ def test_load_backends_from_file_non_utf8_is_a_config_error(tmp_path: Path):
     path.write_bytes(b"\xff\xfe\x00")
     with pytest.raises(ConfigError, match="not UTF-8"):
         load_backends_from_file(path)
+
+
+def test_gateway_accepts_max_response_bytes():
+    # The gateway backend reads its submission and poll bodies under the same
+    # cap as `http`; before, it had no cap and `max_response_bytes` was an
+    # unknown field for it.
+    [backend] = load_backends_from_dict(
+        {"backends": [{"name": "g", "type": "gateway", "url": "http://gw.test", "capability": "c", "max_response_bytes": 2048}]}
+    )
+    assert backend.max_response_bytes == 2048
