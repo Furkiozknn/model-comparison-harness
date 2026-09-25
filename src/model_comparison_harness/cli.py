@@ -50,6 +50,17 @@ def _format_csv(results: list[ComparisonResult]) -> str:
     return buf.getvalue().rstrip("\n")
 
 
+def _printable(text: str) -> str:
+    """Escape anything that is not a printable character (ESC, BEL, CR, LF,
+    C1 controls, ...). Error text and judge reasons come from remote servers
+    and models; printed raw, "\x1b]0;...\x07" retitles the terminal,
+    "\x1b[2J" clears it, and a newline splits a row in two. Success
+    summaries are json.dumps output and already escaped."""
+    if text.isprintable():
+        return text
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in text)
+
+
 def _format_table(results: list[ComparisonResult]) -> str:
     graded = any(r.grade is not None for r in results)
     headers = ["backend", "status", "latency (s)", "summary"]
@@ -62,14 +73,15 @@ def _format_table(results: list[ComparisonResult]) -> str:
             summary = json.dumps(r.result)
         else:
             summary = f"ERROR: {r.error}"
+        summary = _printable(summary)
         if len(summary) > 80:
             summary = summary[:77] + "..."
-        row = [r.backend, r.status, f"{r.latency_seconds:.3f}", summary]
+        row = [_printable(r.backend), r.status, f"{r.latency_seconds:.3f}", summary]
         if graded:
             if r.grade is None:
                 row.append("-")
             else:
-                grade_cell = f"{'PASS' if r.grade.passed else 'FAIL'} {r.grade.score:.2f} - {r.grade.reason}"
+                grade_cell = f"{'PASS' if r.grade.passed else 'FAIL'} {r.grade.score:.2f} - {_printable(r.grade.reason)}"
                 row.append(grade_cell[:60] + "..." if len(grade_cell) > 60 else grade_cell)
         rows.append(row)
 
@@ -86,14 +98,14 @@ def _format_table(results: list[ComparisonResult]) -> str:
     )
     if fastest_success:
         lines.append("")
-        lines.append(f"fastest successful backend: {fastest_success.backend} ({fastest_success.latency_seconds:.3f}s)")
+        lines.append(f"fastest successful backend: {_printable(fastest_success.backend)} ({fastest_success.latency_seconds:.3f}s)")
 
     if graded:
         best_graded = max(
             (r for r in results if r.grade is not None), key=lambda r: r.grade.score, default=None
         )
         if best_graded:
-            lines.append(f"highest-graded backend: {best_graded.backend} ({best_graded.grade.score:.2f})")
+            lines.append(f"highest-graded backend: {_printable(best_graded.backend)} ({best_graded.grade.score:.2f})")
 
     n_success = sum(1 for r in results if r.status == "success")
     n_error = len(results) - n_success

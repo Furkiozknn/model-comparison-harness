@@ -76,6 +76,10 @@ _RUBRIC_SYSTEM_PROMPT = (
 # chain for one result, not each provider in it.
 JUDGE_TIMEOUT_SECONDS = 120.0
 
+# The judge's reason lands in the JSON/CSV untruncated; a judge that ignores
+# "one short sentence" should not turn it into a page of text.
+_MAX_REASON_CHARS = 300
+
 
 def _parse_verdict(content: Any) -> GradeResult:
     text = content.strip() if isinstance(content, str) else content
@@ -86,10 +90,21 @@ def _parse_verdict(content: Any) -> GradeResult:
         if text.lower().startswith("json"):
             text = text[4:]
     data = json.loads(text)
-    score = float(data["score"])
+    # A JSON boolean only: bool("false") is True, so a judge answering
+    # "pass": "false" used to be recorded as a PASS.
+    passed = data["pass"]
+    if not isinstance(passed, bool):
+        raise ValueError(f"'pass' must be true or false, got {passed!r}")
+    score = data["score"]
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise ValueError(f"'score' must be a number, got {score!r}")
+    score = float(score)
     if not (math.isfinite(score) and 0.0 <= score <= 1.0):
         raise ValueError(f"score {score!r} outside 0.0-1.0")
-    return GradeResult(passed=bool(data["pass"]), score=score, reason=str(data.get("reason", "")))
+    reason = str(data.get("reason", ""))
+    if len(reason) > _MAX_REASON_CHARS:
+        reason = reason[:_MAX_REASON_CHARS] + "..."
+    return GradeResult(passed=passed, score=score, reason=reason)
 
 
 def build_judge_chain() -> list[dict[str, Any]]:
@@ -168,4 +183,6 @@ async def grade_result(output: Any, rubric: str) -> GradeResult:
         # The judge didn't return clean JSON - degrade to an ungraded,
         # clearly-labeled result rather than crashing the whole comparison
         # over a formatting slip from the judge model itself.
-        return GradeResult(passed=False, score=0.0, reason=f"judge returned unparseable output: {content[:200]!r}")
+        # repr first: content may be None (some providers return no text on a
+        # refusal), and None[:200] used to raise out of this handler.
+        return GradeResult(passed=False, score=0.0, reason=f"judge returned unparseable output: {repr(content)[:200]}")

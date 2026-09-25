@@ -263,3 +263,24 @@ def test_csv_grade_cell_is_the_same_json_object_as_in_json_output(monkeypatch, c
     assert reader.fieldnames == _RESULT_FIELDS
     assert json.loads(rows[0]["grade"]) == {"passed": False, "score": 0.25, "reason": "meh"}
     assert rows[1]["grade"] == "" and rows[1]["error_type"] == "BackendError"
+
+
+def test_table_escapes_control_characters_from_backend_and_judge_text():
+    # Regression: error text (from a remote server) and judge reasons were
+    # printed raw, so ESC sequences reached the terminal and a newline split
+    # the row.
+    from model_comparison_harness.cli import _format_table
+    from model_comparison_harness.grading import GradeResult
+    from model_comparison_harness.runner import ComparisonResult
+
+    table = _format_table(
+        [
+            ComparisonResult("bad", "error", 0.1, error="x\x1b[2J\x1b]0;pwned\x07\nsecond line", error_type="BackendError"),
+            ComparisonResult("ok", "success", 0.2, result={"t": "\x1b[31m"}, grade=GradeResult(True, 1.0, "fine\x1b[0m\r")),
+        ]
+    )
+    assert "\x1b" not in table and "\x07" not in table and "\r" not in table
+    assert "ERROR: x\\x1b[2J\\x1b]0;pwned\\x07\\nsecond line" in table
+    assert "PASS 1.00 - fine\\x1b[0m\\r" in table
+    # 2 header lines + 2 rows + blank + fastest + highest-graded + totals
+    assert len(table.splitlines()) == 8

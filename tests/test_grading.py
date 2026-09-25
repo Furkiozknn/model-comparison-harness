@@ -205,3 +205,54 @@ async def test_grade_result_fences_output_behind_a_per_call_marker(monkeypatch, 
     assert len(marker) == 16
     assert first.rstrip().endswith(f"END_OUTPUT {marker}")
     assert marker not in second  # fresh marker per call
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # Regression: bool("false") is True, so this was recorded as a PASS.
+        '{"pass": "false", "score": 0.1, "reason": "no"}',
+        '{"pass": 1, "score": 0.1, "reason": "no"}',
+        '{"pass": true, "score": "0.9", "reason": "string score"}',
+        '{"pass": true, "score": true, "reason": "bool score"}',
+        "[1, 2]",
+    ],
+)
+@pytest.mark.asyncio
+async def test_grade_result_requires_a_real_boolean_and_number(monkeypatch, fake_litellm, content):
+    monkeypatch.setenv("GROQ_API_KEY", "g-key")
+
+    async def fake_acompletion(**kwargs):
+        return _FakeCompletionResponse(content)
+
+    fake_litellm(fake_acompletion)
+    result = await grade_result({"note": "x"}, rubric="anything")
+    assert result.passed is False
+    assert "unparseable" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_grade_result_handles_a_judge_that_returns_no_text(monkeypatch, fake_litellm):
+    # Regression: content=None made the fallback's content[:200] raise, so the
+    # row read "grading failed: 'NoneType' object is not subscriptable".
+    monkeypatch.setenv("GROQ_API_KEY", "g-key")
+
+    async def fake_acompletion(**kwargs):
+        return _FakeCompletionResponse(None)
+
+    fake_litellm(fake_acompletion)
+    result = await grade_result({"note": "x"}, rubric="anything")
+    assert result == GradeResult(passed=False, score=0.0, reason="judge returned unparseable output: None")
+
+
+@pytest.mark.asyncio
+async def test_grade_result_clips_a_runaway_reason(monkeypatch, fake_litellm):
+    monkeypatch.setenv("GROQ_API_KEY", "g-key")
+
+    async def fake_acompletion(**kwargs):
+        return _FakeCompletionResponse('{"pass": true, "score": 1, "reason": "' + "r" * 5000 + '"}')
+
+    fake_litellm(fake_acompletion)
+    result = await grade_result({"note": "x"}, rubric="anything")
+    assert result.passed is True
+    assert len(result.reason) == 303
