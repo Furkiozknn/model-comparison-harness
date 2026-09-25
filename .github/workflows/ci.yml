@@ -13,18 +13,41 @@ concurrency:
 
 jobs:
   test:
+    name: test (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject'teki siniflandiricilarin vaat ettigi her surum.
+        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
 
       - name: Install dependencies
         run: uv sync --group dev
 
       - name: Run tests
         run: uv run pytest -v
+
+      # README'deki "Quick start" komutlari, yazildigi gibi. Testler ic
+      # fonksiyonlari cagiriyor; bu adim kurulan `mch` komutunun kendisini.
+      - name: README quick start
+        run: |
+          set -eu
+          uv run mch validate examples/compare-mocks.yaml
+          uv run mch validate examples/compare-with-gateway.yaml
+          out="$(uv run mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}')"
+          echo "$out"
+          echo "$out" | grep -q '^fastest successful backend: fast-mock '
+          echo "$out" | grep -q '^2 succeeded, 1 failed$'
+          if uv run mch run examples/compare-mocks.yaml --input '{}' --fail-on-error >/dev/null; then
+            echo "::error::--fail-on-error sifirla cikti"; exit 1
+          fi
 
   vendor:
     name: gateway_poll.py kaynagiyla ayni mi
