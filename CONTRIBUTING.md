@@ -59,7 +59,7 @@ donuluyor.
 ## 4. Testler
 
 ```
-pytest -q
+uv run pytest -q             # pip ile kurduysan, venv aktifken: pytest -q
 ```
 
 Yeni davranis ekliyorsan **testini de ekle**. Hata duzeltiyorsan, once
