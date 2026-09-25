@@ -153,6 +153,34 @@ Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` 
 - **No retries.** A backend that fails or times out is reported as a single failed row, not retried — matching this tool's job (see how backends behave *right now*, including failures) rather than a production request pipeline's job.
 - **`gateway` and `http` backends make real HTTP calls** to whatever `url:` you configure; nothing stops you from pointing a config at an untrusted or unintended endpoint, so treat comparison configs with the same care as any other file that names a URL to POST arbitrary `--input` JSON to.
 
+### `gateway_poll.py` is not ours
+
+That module is copied verbatim from
+[ai-job-gateway](https://github.com/Furkiozknn/ai-job-gateway), which owns the submit/poll
+contract. Copying is deliberate — this project does not have to depend on the gateway — but
+copies drift in silence: an edge case fixed upstream keeps biting here, and this repository
+stays green against its own stale copy the whole time.
+
+```sh
+python3 arac/vendor-dogrula.py
+```
+
+It fetches the canonical file from `main`, normalises the package-name difference and fails on
+anything else, printing the diff. With no network it **skips rather than passes** — "I could
+not look" and "they are identical" are different facts, and a gate that conflates them is not
+a gate. CI runs it on every push.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+## More from this ecosystem
+
+- **[ai-job-gateway](https://github.com/Furkiozknn/ai-job-gateway)** — the async job contract the rest of the pipeline speaks
+- **[prompt-template-manager](https://github.com/Furkiozknn/prompt-template-manager)** — prompts as YAML in git, rendered by a strict engine
+- **[ai-workflow-engine](https://github.com/Furkiozknn/ai-workflow-engine)** — pipelines as plain YAML DAGs, validated before they run
+- **[mcp-vet](https://github.com/Furkiozknn/mcp-vet)** — audits an MCP server's source before you install it
+
+<sub>All of them in one searchable page: **[furkiozknn.github.io](https://furkiozknn.github.io/)** — each card is generated from that repository's own <code>project-meta.json</code>.</sub>
