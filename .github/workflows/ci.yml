@@ -49,6 +49,37 @@ jobs:
             echo "::error::--fail-on-error sifirla cikti"; exit 1
           fi
 
+  package:
+    # yayinla.yml paketi yalniz etiket gelince kuruyor; bozuk bir paket
+    # (eksik modul, twine'in reddettigi metadata, calismayan `mch` giris
+    # noktasi) etiketten ONCE burada gorunsun.
+    name: paket (build + twine check + temiz kurulum)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: uv build
+
+      - name: twine check
+        run: uvx twine check --strict dist/*
+
+      - name: Wheel'i bos bir ortama kur ve calistir
+        run: |
+          set -eu
+          uv venv /tmp/temiz
+          uv pip install --python /tmp/temiz/bin/python dist/*.whl
+          cd /tmp
+          /tmp/temiz/bin/mch validate "$GITHUB_WORKSPACE/examples/compare-mocks.yaml"
+          /tmp/temiz/bin/mch run "$GITHUB_WORKSPACE/examples/compare-mocks.yaml" --input '{"prompt": "x"}' | grep -q '^2 succeeded, 1 failed$'
+          # __init__.__version__ elle yaziliyor; pyproject ile ayrismasin.
+          /tmp/temiz/bin/python -c "import tomllib, model_comparison_harness as m; v = tomllib.load(open('$GITHUB_WORKSPACE/pyproject.toml', 'rb'))['project']['version']; assert m.__version__ == v, (m.__version__, v); print('surum', v)"
+
   vendor:
     name: gateway_poll.py kaynagiyla ayni mi
     runs-on: ubuntu-latest
