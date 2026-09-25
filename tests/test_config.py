@@ -227,3 +227,13 @@ def test_gateway_accepts_max_response_bytes():
         {"backends": [{"name": "g", "type": "gateway", "url": "http://gw.test", "capability": "c", "max_response_bytes": 2048}]}
     )
     assert backend.max_response_bytes == 2048
+
+
+def test_a_type_registered_only_in_builders_still_loads(monkeypatch):
+    # Regression: the README's "register it in _BUILDERS" path hit
+    # _ALLOWED_FIELDS[type] and crashed with a bare KeyError.
+    from model_comparison_harness import MockBackend, config
+
+    monkeypatch.setitem(config._BUILDERS, "mine", lambda name, spec: MockBackend(name, delay_seconds=0))
+    [backend] = load_backends_from_dict({"backends": [{"name": "x", "type": "mine", "anything": 1}]})
+    assert backend.name == "x"

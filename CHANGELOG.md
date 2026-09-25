@@ -36,7 +36,19 @@ First release.
   rejected while streaming, redirects are reported instead of followed, and
   error bodies quoted into `error` are clipped to 500 characters.
 - The judge call has a 120 s ceiling, and a score outside 0-1 is reported as
-  unparseable.
+  unparseable. `pass` must be a JSON boolean and `score` a JSON number: a
+  judge answering `"pass": "false"` used to be recorded as a PASS.
+- `gateway` backends read submission and poll bodies under the same
+  `max_response_bytes` cap as `http` (they had no cap), and a server-chosen
+  `polling_url` must be a path on the configured host and port
+  (`"@other-host/x"` used to send the next request to `other-host`).
+- `timeout` on `gateway` and `http` backends is a total wall-clock ceiling;
+  a response trickling in under httpx's per-read timeout could hold a run
+  open indefinitely.
+- The table escapes control characters in error text, judge reasons and
+  backend names, so a backend's output cannot drive the terminal.
+- A gateway job's error text is prefixed with `job failed: ` and clipped, so
+  a server-chosen string never starts a table or CSV cell.
 
 ### Config validation
 
@@ -49,5 +61,18 @@ First release.
   instead of a traceback.
 - `--timeout` must be a number greater than 0 (exit 2 otherwise).
 - Ctrl-C exits 130 without a traceback.
+- `max_response_bytes` must be a whole number (`1.5` was truncated to 1).
+- Malformed gateway responses (non-JSON, missing `id`, a poll body that is not
+  an object) are a `BackendError` naming the problem, not a bare
+  `JSONDecodeError`, `KeyError` or `AttributeError`.
+- A backend type registered only in `_BUILDERS`, as the README describes, loads
+  again instead of failing with `KeyError`.
+
+### CI
+
+- Tests on Python 3.11, 3.12 and 3.13, plus the README quick start commands.
+- A package job builds the sdist and wheel, runs `twine check --strict`,
+  installs the wheel into an empty environment, runs the example and checks
+  that `__version__` matches `pyproject.toml`.
 
 [0.1.0]: https://github.com/Furkiozknn/model-comparison-harness/releases/tag/v0.1.0

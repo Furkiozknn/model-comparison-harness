@@ -177,14 +177,18 @@ def load_backends_from_dict(data: dict[str, Any]) -> list[Backend]:
             raise ConfigError(
                 f"backend {name!r}: unknown type {backend_type!r}, must be one of {sorted(_BUILDERS)}"
             )
-        unknown = sorted(set(spec) - _ALLOWED_FIELDS[backend_type])
+        # A type registered only in _BUILDERS (the documented way to add a
+        # custom backend) has no field list here; its builder validates its
+        # own fields. Indexing unconditionally made it a bare KeyError.
+        allowed = _ALLOWED_FIELDS.get(backend_type)
+        unknown = sorted(set(spec) - allowed) if allowed is not None else []
         if unknown:
             field = unknown[0]
-            close = difflib.get_close_matches(field, sorted(_ALLOWED_FIELDS[backend_type]), n=1)
+            close = difflib.get_close_matches(field, sorted(allowed), n=1)
             hint = f" - did you mean {close[0]!r}?" if close else ""
             raise ConfigError(
                 f"backend {name!r} (type={backend_type}): unknown field {field!r}{hint} "
-                f"(allowed: {', '.join(sorted(_ALLOWED_FIELDS[backend_type]))})"
+                f"(allowed: {', '.join(sorted(allowed))})"
             )
         backends.append(builder(name, spec))
 

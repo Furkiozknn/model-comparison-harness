@@ -4,6 +4,10 @@
 
 Run the same request against multiple generative-model backends **concurrently** and compare latency, success/failure, and results side by side — a small CLI (`mch`) for the "which model should this capability actually route to" question.
 
+<img src="assets/terminal-run.svg" alt="Real terminal output of mch run examples/compare-mocks.yaml: three mock backends in a table with status, latency and a summary of each result; fast-mock succeeds in 0.100 s, slow-mock in 1.202 s, flaky-mock fails with its configured error, then the lines 'fastest successful backend: fast-mock (0.100s)' and '2 succeeded, 1 failed'." width="100%">
+
+<sub>Real output of the Quick start command below, rendered by <code>arac/terminal-goruntusu.py</code>.</sub>
+
 This extends the same lesson [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already lives by (try more than one model, don't trust any single one to stay fast/available/alive) into an explicit, on-demand comparison tool: point it at N backends, fire the same input at all of them at once, see exactly how they stack up.
 
 It's part of a small ecosystem of focused repos for an AI creative platform — one of its backend types (`gateway`) speaks the same submit/poll HTTP contract as [`ai-job-gateway`](https://github.com/Furkiozknn/ai-job-gateway), so you can compare a mock/local model against a real one running behind that gateway with no code, just YAML.
@@ -63,10 +67,12 @@ One backend erroring never hides the other results — the whole point is seeing
 | Type | What it does | Required fields | Optional fields (default) |
 |---|---|---|---|
 | `mock` | Configurable delay + fixed (or forced-failing) result. Zero network, zero dependencies — for tests, demos, and dry-running a config's shape. | — | `delay` (0.05), `result`, `should_fail` (false), `failure_message` |
-| `gateway` | `POST /v1/{capability}` + poll, the same submit/poll contract [`ai-job-gateway`](https://github.com/Furkiozknn/ai-job-gateway) implements. Works against any server implementing that same shape, not only that specific repo. | `url`, `capability` | `timeout` (60), `poll_interval` (0.3) |
+| `gateway` | `POST /v1/{capability}` + poll, the same submit/poll contract [`ai-job-gateway`](https://github.com/Furkiozknn/ai-job-gateway) implements. Works against any server implementing that same shape, not only that specific repo. The `polling_url` the server returns must be a path on the configured host and port; anything else is an error, not a request. | `url`, `capability` | `timeout` (60), `poll_interval` (0.3), `max_response_bytes` (10485760) |
 | `http` | The simplest real-world case: `POST` params to a fixed URL, treat the JSON response body as the result directly — no submit/poll assumed. Fits any synchronous request/response API. Redirects are reported as errors, not followed; a body over `max_response_bytes` is cut off and reported. | `url` | `headers`, `timeout` (60), `max_response_bytes` (10485760) |
 
 Every backend also takes `name` (unique) and `type`. `mch validate` checks each field's type and range and rejects unknown fields, so a typo like `dealy: 3` is an error with a "did you mean 'delay'?" hint instead of a silently ignored line. `url` must be an absolute `http://` or `https://` URL.
+
+For `gateway` and `http`, `timeout` is a total wall-clock ceiling on the whole call (submission, every poll, reading every body), not only a per-read limit, so a server that trickles its response in slowly still stops at `timeout`. When it runs out, an `http` backend reports `error_type: TimeoutError` and a `gateway` backend reports `BackendError` with `did not finish within ...s (last status: ...)`. `max_response_bytes` caps every response body the backend reads; a larger one is cut off and reported instead of being held in memory.
 
 See `examples/compare-with-gateway.yaml` for a config comparing a local mock against a real running `ai-job-gateway` server.
 
@@ -122,7 +128,7 @@ highest-graded backend: fast-mock (0.20)
 
 (The grades above are illustrative: the verdict and reason come from whichever judge model answers.)
 
-The judge is a configurable free-tier chain — NVIDIA NIM first, then Groq/Mistral/Gemini/Cerebras, whichever has an API key set (`NVIDIA_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `GEMINI_API_KEY` / `CEREBRAS_API_KEY`) — the same provider list [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already proved out, reused here as an independent implementation rather than a shared dependency between the two repos. If `--rubric` is given but none of those keys are set, `mch run` fails immediately with a clear error instead of running every backend for real and only discovering grading was unavailable afterward. A failed backend call is never graded — there's no result to judge. The backend's output goes to the judge between `BEGIN_OUTPUT`/`END_OUTPUT` lines carrying a random marker, with a system prompt saying that everything inside is data to grade, not instructions. An output that says "ignore the rubric" therefore can't close the block early. That makes injection harder, but a judge model can still be swayed, so treat a grade as a signal and not as proof. A judge that doesn't answer within 120 s, or returns a score outside 0–1, gives a clearly labelled failed grade instead of hanging or passing through bad data. Grading latency is measured and reported separately; it never leaks into `latency_seconds`, which stays exactly what it was before this feature existed.
+The judge is a configurable free-tier chain — NVIDIA NIM first, then Groq/Mistral/Gemini/Cerebras, whichever has an API key set (`NVIDIA_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `GEMINI_API_KEY` / `CEREBRAS_API_KEY`) — the same provider list [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already proved out, reused here as an independent implementation rather than a shared dependency between the two repos. If `--rubric` is given but none of those keys are set, `mch run` fails immediately with a clear error instead of running every backend for real and only discovering grading was unavailable afterward. A failed backend call is never graded — there's no result to judge. The backend's output goes to the judge between `BEGIN_OUTPUT`/`END_OUTPUT` lines carrying a random marker, with a system prompt saying that everything inside is data to grade, not instructions. An output that says "ignore the rubric" therefore can't close the block early. That makes injection harder, but a judge model can still be swayed, so treat a grade as a signal and not as proof. A judge that doesn't answer within 120 s, or whose answer is not exactly `{"pass": true|false, "score": <number 0–1>, ...}` (a string `"false"` or `"0.9"` is rejected, not coerced), gives a clearly labelled failed grade instead of hanging or passing through bad data. Grading latency is measured and reported separately; it never leaks into `latency_seconds`, which stays exactly what it was before this feature existed.
 
 **v1 limitation:** the rubric is a CLI flag / library kwarg only, not yet a YAML config field — natural to add once there's a real need for a comparison config to travel with its own fixed grading criteria.
 
@@ -146,15 +152,22 @@ for r in results:
 
 ## Writing a new backend type
 
-Implement the `Backend` interface (one async method) and register it in `config.py`'s `_BUILDERS` dict:
+Implement the `Backend` interface (one async method), then register a builder for it in `config.py`'s `_BUILDERS` dict. The builder gets the backend's `name` and its YAML mapping, and should raise `ConfigError` for a bad field so `mch validate` can report it:
 
 ```python
-from model_comparison_harness import Backend
+from model_comparison_harness import Backend, config
 
 class MyBackend(Backend):
+    def __init__(self, name: str) -> None:
+        self.name = name
+
     async def run(self, params: dict) -> dict:
         ...  # call your model, return a JSON-serializable result, or raise
+
+config._BUILDERS["mine"] = lambda name, spec: MyBackend(name)
 ```
+
+Also list the type's accepted fields in `_ALLOWED_FIELDS` to get the same unknown-field check (and "did you mean" hint) the built-in types have. Without an entry there, every field is passed to your builder unchecked.
 
 ## Development
 
@@ -163,7 +176,9 @@ uv sync --group dev
 uv run pytest
 ```
 
-Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 117 tests (`uv run pytest --collect-only -q` prints the current count).
+Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 142 tests (`uv run pytest --collect-only -q` prints the current count).
+
+The terminal image at the top is regenerated from a real run with `uv run python arac/terminal-goruntusu.py`.
 
 ## Limitations
 
@@ -172,7 +187,8 @@ Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` 
 - **Latency includes this process's own overhead** (event loop scheduling, JSON encode/decode) on top of each backend's real network/inference time — fine for relative "which is faster" comparisons between backends run side by side in the same process, not a substitute for a dedicated load-testing tool if you need absolute numbers.
 - **One input per run.** `mch run` fires a single `--input` payload at every backend once; there's no built-in sweep over a list of prompts or repeated trials for statistical confidence (score with `--json`/`--csv` output piped into your own script if you need that).
 - **No retries.** A backend that fails or times out is reported as a single failed row, not retried — matching this tool's job (see how backends behave *right now*, including failures) rather than a production request pipeline's job.
-- **`gateway` and `http` backends make real HTTP calls** to whatever `url:` you configure; nothing stops you from pointing a config at an untrusted or unintended endpoint, so treat comparison configs with the same care as any other file that names a URL to POST arbitrary `--input` JSON to. `headers:` values (API keys, for example) are sent as written, so keep a config that holds them out of git.
+- **`gateway` and `http` backends make real HTTP calls** to whatever `url:` you configure; nothing stops you from pointing a config at an untrusted or unintended endpoint, so treat comparison configs with the same care as any other file that names a URL to POST arbitrary `--input` JSON to. `headers:` values (API keys, for example) are sent as written, so keep a config that holds them out of git. Redirects are never followed, so those headers are not re-sent to a host the config does not name.
+- **Output is data from the backends.** The table escapes control characters (a server's error text cannot move the cursor, clear the screen or split a row) and `--json` escapes them too. `--csv` writes every cell as the backend produced it, which is what a CSV consumer expects; open CSV from an untrusted backend in a spreadsheet with the same care as any downloaded CSV.
 
 ### `gateway_poll.py` is not ours
 

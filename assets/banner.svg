@@ -69,5 +69,5 @@
     </g>
   </g>
 
-  <text x="178" y="272" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#5c6b7f">62 tests &#183; concurrent dispatch &#183; error_type kept, never averaged away &#183; CLI: mch &#183; MIT</text>
+  <text x="178" y="272" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#5c6b7f">142 tests &#183; concurrent dispatch &#183; error_type kept, never averaged away &#183; CLI: mch &#183; MIT</text>
 </svg>
