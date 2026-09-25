@@ -180,6 +180,7 @@ def test_run_with_rubric_and_configured_judge_shows_grade_column(monkeypatch, ca
         return GradeResult(passed=True, score=0.8, reason="looks right")
 
     monkeypatch.setattr("model_comparison_harness.runner.grade_result", fake_grade_result)
+    monkeypatch.setattr("model_comparison_harness.cli.grading_extra_installed", lambda: True)
 
     _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--rubric", "should be fast"])
 
@@ -187,6 +188,26 @@ def test_run_with_rubric_and_configured_judge_shows_grade_column(monkeypatch, ca
     assert "grade" in out
     assert "PASS 0.80" in out
     assert "highest-graded backend: fast" in out
+
+
+def test_run_with_rubric_fails_fast_when_the_grading_extra_is_missing(monkeypatch, capsys, config_file):
+    # Regression: with a judge key set but litellm not installed (the default
+    # after a plain `uv sync`), every backend ran, every row read "grading
+    # unavailable", and the exit code was 0.
+    monkeypatch.setenv("GROQ_API_KEY", "g-key")
+    monkeypatch.setattr("model_comparison_harness.cli.grading_extra_installed", lambda: False)
+
+    async def must_not_run(*args, **kwargs):
+        raise AssertionError("backends ran before the grading extra was checked")
+
+    monkeypatch.setattr("model_comparison_harness.cli.run_comparison", must_not_run)
+    with pytest.raises(SystemExit) as exc_info:
+        _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--rubric", "anything"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "uv sync --extra grading" in captured.err
+    assert captured.out == ""
 
 
 # --- exit codes and argument validation --------------------------------------
@@ -236,6 +257,7 @@ def test_json_output_schema_is_pinned(monkeypatch, capsys, config_file):
         return GradeResult(passed=True, score=0.5, reason="ok")
 
     monkeypatch.setattr("model_comparison_harness.runner.grade_result", fake_grade_result)
+    monkeypatch.setattr("model_comparison_harness.cli.grading_extra_installed", lambda: True)
     _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--json", "--rubric", "r"])
     rows = json.loads(capsys.readouterr().out)
 
@@ -257,6 +279,7 @@ def test_csv_grade_cell_is_the_same_json_object_as_in_json_output(monkeypatch, c
         return GradeResult(passed=False, score=0.25, reason="meh")
 
     monkeypatch.setattr("model_comparison_harness.runner.grade_result", fake_grade_result)
+    monkeypatch.setattr("model_comparison_harness.cli.grading_extra_installed", lambda: True)
     _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--csv", "--rubric", "r"])
     reader = csv.DictReader(io.StringIO(capsys.readouterr().out))
     rows = list(reader)
@@ -284,3 +307,22 @@ def test_table_escapes_control_characters_from_backend_and_judge_text():
     assert "PASS 1.00 - fine\\x1b[0m\\r" in table
     # 2 header lines + 2 rows + blank + fastest + highest-graded + totals
     assert len(table.splitlines()) == 8
+
+
+def test_json_stdout_stays_parseable_when_something_prints_during_the_run(monkeypatch, capsys, config_file):
+    # Regression: litellm prints "Give Feedback / Get Help ..." to stdout on a
+    # failed judge call, which corrupted `--json`/`--csv` output.
+    from model_comparison_harness import runner
+
+    real_run_one = runner._run_one
+
+    async def chatty_run_one(*args, **kwargs):
+        print("\x1b[1;31mGive Feedback / Get Help: https://example.invalid\x1b[0m")
+        return await real_run_one(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "_run_one", chatty_run_one)
+    _run(monkeypatch, ["run", str(config_file), "--input", "{}", "--json"])
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out)
+    assert [row["backend"] for row in rows] == ["fast", "broken"]
+    assert "Give Feedback" in captured.err

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import csv
 import io
 import json
@@ -13,7 +14,7 @@ from dataclasses import asdict, fields
 from typing import Any
 
 from .config import ConfigError, load_backends_from_file
-from .grading import build_judge_chain
+from .grading import build_judge_chain, grading_extra_installed
 from .runner import ComparisonResult, run_comparison
 
 
@@ -147,8 +148,22 @@ def _cmd_run(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         raise SystemExit(1)
+    if args.rubric is not None and not grading_extra_installed():
+        # Same reason as the key check above: otherwise every backend runs
+        # for real and each row only then says "grading unavailable", with
+        # exit 0 and a "highest-graded backend" line computed from zeros.
+        print(
+            "error: --rubric needs the optional 'grading' extra (litellm), which is not installed - "
+            "run `uv sync --extra grading` (or `pip install 'model-comparison-harness[grading]'`).",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
-    results = asyncio.run(run_comparison(backends, params, timeout=args.timeout, rubric=args.rubric))
+    # stdout carries only the table/JSON/CSV. Anything a backend or the judge
+    # library prints while running (litellm prints a banner to stdout on every
+    # failed judge call) goes to stderr, or `--json | jq` breaks.
+    with contextlib.redirect_stdout(sys.stderr):
+        results = asyncio.run(run_comparison(backends, params, timeout=args.timeout, rubric=args.rubric))
 
     if args.json:
         print(json.dumps([asdict(r) for r in results], indent=2))

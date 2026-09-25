@@ -84,11 +84,12 @@ async def test_grade_result_raises_grading_unavailable_when_no_judge_configured(
 
 @pytest.mark.asyncio
 async def test_grade_result_raises_grading_unavailable_when_optional_extra_not_installed(monkeypatch):
-    # The base test environment deliberately does not install the optional
-    # `grading` extra (litellm) - this exercises that real ImportError path,
-    # not a mocked one.
+    # A None entry in sys.modules makes `import litellm` raise ImportError
+    # whether or not the extra is installed. Deleting the entry instead only
+    # worked while litellm was absent; with `--extra grading` installed the
+    # test made a real judge call over the network and failed.
     monkeypatch.setenv("GROQ_API_KEY", "g-key")
-    monkeypatch.delitem(sys.modules, "litellm", raising=False)
+    monkeypatch.setitem(sys.modules, "litellm", None)
 
     with pytest.raises(GradingUnavailable, match="grading"):
         await grade_result({"note": "x"}, rubric="anything")

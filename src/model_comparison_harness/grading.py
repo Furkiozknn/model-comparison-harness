@@ -20,6 +20,7 @@ contracts, never a shared Python dependency), just the same well-tested
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import math
 import os
@@ -124,6 +125,12 @@ def build_judge_chain() -> list[dict[str, Any]]:
     return chain
 
 
+def grading_extra_installed() -> bool:
+    """True if the optional `grading` extra (litellm) can be imported. Checked
+    without importing it: litellm takes seconds to import."""
+    return importlib.util.find_spec("litellm") is not None
+
+
 async def grade_result(output: Any, rubric: str) -> GradeResult:
     """Grade `output` (any JSON-serializable value) against `rubric` using
     whichever judge provider is configured. Raises GradingUnavailable if no
@@ -142,6 +149,10 @@ async def grade_result(output: Any, rubric: str) -> GradeResult:
         raise GradingUnavailable(
             "the optional 'grading' extra isn't installed - run `uv sync --extra grading`"
         ) from exc
+
+    # litellm prints a "Give Feedback / Get Help" banner on every failed call;
+    # the CLI keeps stdout for results, but the banner is noise on stderr too.
+    litellm.suppress_debug_info = True
 
     primary, fallbacks = chain[0], chain[1:]
     # `output` is whatever a backend returned, so a result could otherwise

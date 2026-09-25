@@ -32,7 +32,7 @@
     "python",
     "routing"
   ],
-  "summary": "Fire one request at N model backends at once and read latency, success and output side by side. --rubric adds a judge model returning pass/fail, a 0-1 score and a reason, so you compare quality too, not just who answered first. Every failure carries an error_type a script can branch on. CLI: mch. 142 tests.",
+  "summary": "Fire one request at N model backends at once and read latency, success and output side by side. --rubric adds a judge model returning pass/fail, a 0-1 score and a reason, so you compare quality too, not just who answered first. Every failure carries an error_type a script can branch on. CLI: mch. 144 tests.",
   "key_features": [
     "Fires one request at N model backends at once and puts latency, success and output side by side",
     "--rubric adds a judge model returning pass/fail, a 0-1 score and a reason, so quality is compared too",
@@ -48,8 +48,8 @@
     "videos": []
   },
   "tests": {
-    "count": 142,
-    "source": "`142 passed`",
+    "count": 144,
+    "source": "`144 passed`",
     "measured": "2026-09-25"
   },
   "ci": {

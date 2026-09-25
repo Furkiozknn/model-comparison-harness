@@ -67,6 +67,13 @@ First release.
   `JSONDecodeError`, `KeyError` or `AttributeError`.
 - A backend type registered only in `_BUILDERS`, as the README describes, loads
   again instead of failing with `KeyError`.
+- `--rubric` without the `grading` extra installed fails up front (exit 1),
+  like a missing judge key, instead of running every backend and grading each
+  row "unavailable" with exit 0.
+- stdout carries only the table/JSON/CSV. litellm printed a "Give Feedback"
+  banner to stdout on every failed judge call, which broke `--json` and
+  `--csv` output; output printed during the run now goes to stderr and the
+  banner is switched off.
 
 ### CI
 

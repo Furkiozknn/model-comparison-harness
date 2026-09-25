@@ -89,7 +89,7 @@ uv run mch run config.yaml --input '{"prompt": "..."}' --fail-on-error  # exit 1
 uv run mch run config.yaml --input '{"prompt": "..."}' --timeout 10     # hard per-backend ceiling enforced by the harness
 ```
 
-`--timeout` must be a number greater than 0. `--json` and `--csv` are mutually exclusive (pick one machine-readable format at a time); with neither, you get the human-readable table.
+`--timeout` must be a number greater than 0. `--json` and `--csv` are mutually exclusive (pick one machine-readable format at a time); with neither, you get the human-readable table. stdout carries only that output: errors, and anything a backend or the judge library prints while running, go to stderr, so `--json | jq` and `--csv > file.csv` stay clean.
 
 Every result — table, JSON, and CSV alike — carries an `error_type` alongside `error` for failures: the failing exception's class name (`"BackendError"`, `"TimeoutError"`, or whatever a custom backend raises), so a script can branch on the *kind* of failure without parsing the message string. `--timeout` is enforced by the harness itself, independently of any timeout a backend already applies internally (e.g. `gateway`'s and `http`'s own `timeout:` config field) — it exists specifically to bound a backend that doesn't time out on its own, whether that's a bug in a custom `Backend` subclass or a server that simply never responds.
 
@@ -98,7 +98,7 @@ Exit codes, so a script or CI job can tell the cases apart:
 | Code | Meaning |
 |---|---|
 | `0` | The run completed. Backends may still have failed; add `--fail-on-error` to make that non-zero. |
-| `1` | Invalid config (`mch validate` prints `INVALID: ...`), bad `--input`, `--rubric` without a judge key, or `--fail-on-error` with at least one failed backend. |
+| `1` | Invalid config (`mch validate` prints `INVALID: ...`), bad `--input`, `--rubric` without a judge key or without the `grading` extra, or `--fail-on-error` with at least one failed backend. |
 | `2` | Command-line usage error from argparse, e.g. a missing `--input` or `--timeout 0`. |
 | `130` | Interrupted with Ctrl-C. In-flight backends are cancelled and their HTTP clients closed. |
 
@@ -128,7 +128,7 @@ highest-graded backend: fast-mock (0.20)
 
 (The grades above are illustrative: the verdict and reason come from whichever judge model answers.)
 
-The judge is a configurable free-tier chain — NVIDIA NIM first, then Groq/Mistral/Gemini/Cerebras, whichever has an API key set (`NVIDIA_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `GEMINI_API_KEY` / `CEREBRAS_API_KEY`) — the same provider list [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already proved out, reused here as an independent implementation rather than a shared dependency between the two repos. If `--rubric` is given but none of those keys are set, `mch run` fails immediately with a clear error instead of running every backend for real and only discovering grading was unavailable afterward. A failed backend call is never graded — there's no result to judge. The backend's output goes to the judge between `BEGIN_OUTPUT`/`END_OUTPUT` lines carrying a random marker, with a system prompt saying that everything inside is data to grade, not instructions. An output that says "ignore the rubric" therefore can't close the block early. That makes injection harder, but a judge model can still be swayed, so treat a grade as a signal and not as proof. A judge that doesn't answer within 120 s, or whose answer is not exactly `{"pass": true|false, "score": <number 0–1>, ...}` (a string `"false"` or `"0.9"` is rejected, not coerced), gives a clearly labelled failed grade instead of hanging or passing through bad data. Grading latency is measured and reported separately; it never leaks into `latency_seconds`, which stays exactly what it was before this feature existed.
+The judge is a configurable free-tier chain — NVIDIA NIM first, then Groq/Mistral/Gemini/Cerebras, whichever has an API key set (`NVIDIA_API_KEY` / `GROQ_API_KEY` / `MISTRAL_API_KEY` / `GEMINI_API_KEY` / `CEREBRAS_API_KEY`) — the same provider list [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already proved out, reused here as an independent implementation rather than a shared dependency between the two repos. If `--rubric` is given but none of those keys are set, or the `grading` extra is not installed, `mch run` fails immediately (exit 1) with a clear error instead of running every backend for real and only discovering grading was unavailable afterward. A failed backend call is never graded — there's no result to judge. The backend's output goes to the judge between `BEGIN_OUTPUT`/`END_OUTPUT` lines carrying a random marker, with a system prompt saying that everything inside is data to grade, not instructions. An output that says "ignore the rubric" therefore can't close the block early. That makes injection harder, but a judge model can still be swayed, so treat a grade as a signal and not as proof. A judge that doesn't answer within 120 s, or whose answer is not exactly `{"pass": true|false, "score": <number 0–1>, ...}` (a string `"false"` or `"0.9"` is rejected, not coerced), gives a clearly labelled failed grade instead of hanging or passing through bad data. Grading latency is measured and reported separately; it never leaks into `latency_seconds`, which stays exactly what it was before this feature existed.
 
 **v1 limitation:** the rubric is a CLI flag / library kwarg only, not yet a YAML config field — natural to add once there's a real need for a comparison config to travel with its own fixed grading criteria.
 
@@ -176,7 +176,7 @@ uv sync --group dev
 uv run pytest
 ```
 
-Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 142 tests (`uv run pytest --collect-only -q` prints the current count).
+Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 144 tests (`uv run pytest --collect-only -q` prints the current count).
 
 The terminal image at the top is regenerated from a real run with `uv run python arac/terminal-goruntusu.py`.
 
