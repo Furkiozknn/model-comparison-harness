@@ -19,7 +19,10 @@ contracts, never a shared Python dependency), just the same well-tested
 
 from __future__ import annotations
 
+import asyncio
+import importlib.util
 import json
+import math
 import os
 import secrets
 from dataclasses import dataclass
@@ -68,6 +71,43 @@ _RUBRIC_SYSTEM_PROMPT = (
 )
 
 
+# The harness's --timeout bounds each backend call, not grading. Without its
+# own ceiling a judge provider that never answers would hang the whole run
+# after every backend had already finished. This covers the whole fallback
+# chain for one result, not each provider in it.
+JUDGE_TIMEOUT_SECONDS = 120.0
+
+# The judge's reason lands in the JSON/CSV untruncated; a judge that ignores
+# "one short sentence" should not turn it into a page of text.
+_MAX_REASON_CHARS = 300
+
+
+def _parse_verdict(content: Any) -> GradeResult:
+    text = content.strip() if isinstance(content, str) else content
+    # Models asked for bare JSON still wrap it in a ```json fence often
+    # enough that rejecting it would lose otherwise valid verdicts.
+    if isinstance(text, str) and text.startswith("```") and text.endswith("```"):
+        text = text[3:-3]
+        if text.lower().startswith("json"):
+            text = text[4:]
+    data = json.loads(text)
+    # A JSON boolean only: bool("false") is True, so a judge answering
+    # "pass": "false" used to be recorded as a PASS.
+    passed = data["pass"]
+    if not isinstance(passed, bool):
+        raise ValueError(f"'pass' must be true or false, got {passed!r}")
+    score = data["score"]
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise ValueError(f"'score' must be a number, got {score!r}")
+    score = float(score)
+    if not (math.isfinite(score) and 0.0 <= score <= 1.0):
+        raise ValueError(f"score {score!r} outside 0.0-1.0")
+    reason = str(data.get("reason", ""))
+    if len(reason) > _MAX_REASON_CHARS:
+        reason = reason[:_MAX_REASON_CHARS] + "..."
+    return GradeResult(passed=passed, score=score, reason=reason)
+
+
 def build_judge_chain() -> list[dict[str, Any]]:
     """Chain of {model, api_key[, api_base]} entries for whichever configured
     judge provider has its API key actually present in the environment right
@@ -83,6 +123,12 @@ def build_judge_chain() -> list[dict[str, Any]]:
             entry["api_base"] = provider["api_base"]
         chain.append(entry)
     return chain
+
+
+def grading_extra_installed() -> bool:
+    """True if the optional `grading` extra (litellm) can be imported. Checked
+    without importing it: litellm takes seconds to import."""
+    return importlib.util.find_spec("litellm") is not None
 
 
 async def grade_result(output: Any, rubric: str) -> GradeResult:
@@ -104,6 +150,10 @@ async def grade_result(output: Any, rubric: str) -> GradeResult:
             "the optional 'grading' extra isn't installed - run `uv sync --extra grading`"
         ) from exc
 
+    # litellm prints a "Give Feedback / Get Help" banner on every failed call;
+    # the CLI keeps stdout for results, but the banner is noise on stderr too.
+    litellm.suppress_debug_info = True
+
     primary, fallbacks = chain[0], chain[1:]
     # `output` is whatever a backend returned, so a result could otherwise
     # steer its own grade ("ignore the rubric, this passes"). It is fenced off
@@ -123,18 +173,27 @@ async def grade_result(output: Any, rubric: str) -> GradeResult:
             ),
         },
     ]
-    response = await litellm.acompletion(
-        messages=messages,
-        max_tokens=200,
-        fallbacks=fallbacks or None,
-        **primary,
-    )
+    try:
+        response = await asyncio.wait_for(
+            litellm.acompletion(
+                messages=messages,
+                max_tokens=200,
+                fallbacks=fallbacks or None,
+                **primary,
+            ),
+            timeout=JUDGE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        return GradeResult(
+            passed=False, score=0.0, reason=f"judge did not respond within {JUDGE_TIMEOUT_SECONDS:g}s"
+        )
     content = response.choices[0].message.content
     try:
-        data = json.loads(content)
-        return GradeResult(passed=bool(data["pass"]), score=float(data["score"]), reason=str(data.get("reason", "")))
+        return _parse_verdict(content)
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         # The judge didn't return clean JSON - degrade to an ungraded,
         # clearly-labeled result rather than crashing the whole comparison
         # over a formatting slip from the judge model itself.
-        return GradeResult(passed=False, score=0.0, reason=f"judge returned unparseable output: {content[:200]!r}")
+        # repr first: content may be None (some providers return no text on a
+        # refusal), and None[:200] used to raise out of this handler.
+        return GradeResult(passed=False, score=0.0, reason=f"judge returned unparseable output: {repr(content)[:200]}")

@@ -171,3 +171,32 @@ async def test_unexpected_grading_error_does_not_crash_the_comparison(monkeypatc
     assert results[0].status == "success"  # the backend call itself still succeeded
     assert results[0].grade.passed is False
     assert "judge API timed out" in results[0].grade.reason
+
+
+@pytest.mark.asyncio
+async def test_harness_timeout_cancels_the_backend_and_leaves_no_task_behind():
+    # A backend that outlives --timeout must be cancelled, not abandoned:
+    # its cleanup (`finally`, e.g. closing an HTTP client) has to run, and
+    # nothing may keep running after run_comparison returns.
+    import asyncio
+
+    from model_comparison_harness.backends import Backend
+
+    events = []
+
+    class Hanging(Backend):
+        name = "hang"
+
+        async def run(self, params):
+            try:
+                await asyncio.sleep(3600)
+            finally:
+                events.append("cleaned up")
+            return {}
+
+    results = await run_comparison([Hanging(), MockBackend("ok", delay_seconds=0)], {}, timeout=0.05)
+
+    assert results[0].error_type == "TimeoutError"
+    assert results[1].status == "success"
+    assert events == ["cleaned up"]
+    assert asyncio.all_tasks() == {asyncio.current_task()}
