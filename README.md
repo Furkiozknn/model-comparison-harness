@@ -2,6 +2,9 @@
 
 # model-comparison-harness
 
+<p align="center"><img src="docs/reel/reel.gif" alt="model-comparison-harness - 15-second motion reel" width="720"></p>
+<p align="center"><sub><a href="docs/reel/reel.mp4">MP4 version with sound</a></sub></p>
+
 Run the same request against multiple generative-model backends **concurrently** and compare latency, success/failure, and results side by side — a small CLI (`mch`) for the "which model should this capability actually route to" question.
 
 <img src="assets/terminal-run.svg" alt="Real terminal output of mch run examples/compare-mocks.yaml: three mock backends in a table with status, latency and a summary of each result; fast-mock succeeds in 0.100 s, slow-mock in 1.202 s, flaky-mock fails with its configured error, then the lines 'fastest successful backend: fast-mock (0.100s)' and '2 succeeded, 1 failed'." width="100%">
