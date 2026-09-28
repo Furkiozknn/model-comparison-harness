@@ -2,6 +2,9 @@
 
 # model-comparison-harness
 
+<p align="center"><img src="docs/reel/reel.gif" alt="model-comparison-harness - 15-second motion reel" width="720"></p>
+<p align="center"><sub><a href="docs/reel/reel.mp4">MP4 version with sound</a></sub></p>
+
 Run the same request against multiple generative-model backends **concurrently** and compare latency, success/failure, and results side by side — a small CLI (`mch`) for the "which model should this capability actually route to" question.
 
 This extends the same lesson [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already lives by (try more than one model, don't trust any single one to stay fast/available/alive) into an explicit, on-demand comparison tool: point it at N backends, fire the same input at all of them at once, see exactly how they stack up.
