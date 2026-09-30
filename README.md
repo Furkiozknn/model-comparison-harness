@@ -2,14 +2,26 @@
 
 # model-comparison-harness
 
-<p align="center"><img src="docs/reel/reel.gif" alt="model-comparison-harness - 15-second motion reel" width="720"></p>
-<p align="center"><sub><a href="docs/reel/reel.mp4">MP4 version with sound</a></sub></p>
+**Send one JSON input to several model backends at once and read latency, success and output side by side.** A small CLI (`mch`) for the "which model should this capability actually route to" question.
 
-Run the same request against multiple generative-model backends **concurrently** and compare latency, success/failure, and results side by side — a small CLI (`mch`) for the "which model should this capability actually route to" question.
+```bash
+git clone https://github.com/Furkiozknn/model-comparison-harness.git && cd model-comparison-harness
+uv run mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}'
+```
 
-<img src="assets/terminal-run.svg" alt="Real terminal output of mch run examples/compare-mocks.yaml: three mock backends in a table with status, latency and a summary of each result; fast-mock succeeds in 0.100 s, slow-mock in 1.202 s, flaky-mock fails with its configured error, then the lines 'fastest successful backend: fast-mock (0.100s)' and '2 succeeded, 1 failed'." width="100%">
+Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/). The example config uses `mock` backends only, so it runs offline with no API key. Measured on a clean clone (Windows 11, uv 0.12): clone 1.6 s, first `uv run` (creates the environment) 5.9 s, later runs about 3 s. The output is shown in the recording below and in Quick start.
 
-<sub>Real output of the Quick start command below, rendered by <code>arac/terminal-goruntusu.py</code>.</sub>
+<p align="center"><img src="docs/demo/demo.gif" alt="Terminal recording: mch --version, mch validate, then mch run on three mock backends showing fast-mock succeeding in 0.1 s, slow-mock in 1.2 s and flaky-mock failing with its configured error, then the same run with --timeout 0.5 --fail-on-error where slow-mock times out and the exit code is 1." width="100%"></p>
+
+<sub>Real commands, real output, recorded by <code>arac/demo-uret.py</code>; every command with its exit code is in <a href="docs/demo/komutlar.txt"><code>docs/demo/komutlar.txt</code></a>. The backends are <b>mock</b>: the latencies are the delays set in the config (0.1 / 1.2 / 0.3 s), not measurements of any real model.</sub>
+
+| Use it when | Do not use it for |
+|---|---|
+| You have 2+ candidate backends for one capability and want to see, for the same input, which answers, how fast, and how they fail. | Load testing or absolute latency numbers: it fires one request per backend, and the timings include this process's overhead. |
+| You want a check in CI that a set of endpoints still answers (`--fail-on-error`, exit codes below). | Statistical comparison: there is no repeat or sweep over many prompts; pipe `--json`/`--csv` into your own script for that. |
+| You are wiring a new backend and want to see its output next to a known one, with a mock as a stand-in. | A production request pipeline: no retries, no fallback routing. |
+
+> **Windows PowerShell 5.1 and `--input`:** it strips the inner double quotes of a native argument. Write `--input '{\"prompt\": \"a cat\"}'` there (bash, zsh and PowerShell 7 take the form above). `mch` tells you this if the JSON does not parse.
 
 This extends the same lesson [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already lives by (try more than one model, don't trust any single one to stay fast/available/alive) into an explicit, on-demand comparison tool: point it at N backends, fire the same input at all of them at once, see exactly how they stack up.
 
@@ -82,6 +94,8 @@ See `examples/compare-with-gateway.yaml` for a config comparing a local mock aga
 ## The CLI
 
 ```bash
+uv run mch --version
+uv run mch --help                                                        # first run, flags, exit codes
 uv run mch validate config.yaml
 # OK: 3 backend(s) configured: fast-mock, slow-mock, flaky-mock
 
@@ -179,9 +193,9 @@ uv sync --group dev
 uv run pytest
 ```
 
-Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 144 tests (`uv run pytest --collect-only -q` prints the current count).
+Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 150 tests (`uv run pytest --collect-only -q` prints the current count).
 
-The terminal image at the top is regenerated from a real run with `uv run python arac/terminal-goruntusu.py`.
+The recording at the top is regenerated from real runs with `uv run --with pillow python arac/demo-uret.py` (needs ffmpeg; the font in `assets/yazi/` is JetBrains Mono, SIL OFL 1.1).
 
 ## Limitations
 

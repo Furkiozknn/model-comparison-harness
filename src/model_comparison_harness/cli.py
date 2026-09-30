@@ -13,6 +13,7 @@ import sys
 from dataclasses import asdict, fields
 from typing import Any
 
+from . import __version__
 from .config import ConfigError, load_backends_from_file
 from .grading import build_judge_chain, grading_extra_installed
 from .runner import ComparisonResult, run_comparison
@@ -114,11 +115,35 @@ def _format_table(results: list[ComparisonResult]) -> str:
     return "\n".join(lines)
 
 
+_EXAMPLE = "examples/compare-mocks.yaml"
+
+_EPILOG = """\
+first run (offline, no API key - the example config uses mock backends):
+  mch validate examples/compare-mocks.yaml
+  mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}'
+
+exit codes:
+  0    the run completed (backends may still have failed; see --fail-on-error)
+  1    bad config or --input, --rubric unavailable, or --fail-on-error with a failed backend
+  2    command-line usage error
+  130  interrupted with Ctrl-C
+"""
+
+
+def _missing_file_hint(exc: ConfigError) -> str:
+    """A config that does not exist is the likeliest first mistake; say what a
+    working one looks like."""
+    text = str(exc)
+    if text.startswith(("no such file", "not a file")):
+        text += f"  (a YAML file with a `backends:` list; try {_EXAMPLE} from a clone of the repo)"
+    return text
+
+
 def _cmd_validate(args: argparse.Namespace) -> None:
     try:
         backends = load_backends_from_file(args.config)
     except ConfigError as exc:
-        print(f"INVALID: {exc}", file=sys.stderr)
+        print(f"INVALID: {_missing_file_hint(exc)}", file=sys.stderr)
         raise SystemExit(1)
     print(f"OK: {len(backends)} backend(s) configured: {', '.join(b.name for b in backends)}")
 
@@ -127,13 +152,19 @@ def _cmd_run(args: argparse.Namespace) -> None:
     try:
         backends = load_backends_from_file(args.config)
     except ConfigError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {_missing_file_hint(exc)}", file=sys.stderr)
         raise SystemExit(1)
 
     try:
         params: dict[str, Any] = json.loads(args.input)
     except json.JSONDecodeError as exc:
-        print(f"error: --input must be valid JSON: {exc}", file=sys.stderr)
+        print(
+            f"error: --input must be valid JSON: {exc}\n"
+            "hint: quote the whole object so the shell keeps the inner double quotes - "
+            "bash/zsh: --input '{\"prompt\": \"hi\"}'; "
+            "PowerShell 5.1: --input '{\\\"prompt\\\": \\\"hi\\\"}'",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
     if not isinstance(params, dict):
         print("error: --input must be a JSON object", file=sys.stderr)
@@ -177,17 +208,26 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="mch", description="model-comparison-harness")
+    parser = argparse.ArgumentParser(
+        prog="mch",
+        description=(
+            "Send the same JSON input to several model backends at once and compare "
+            "latency, success and output side by side."
+        ),
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--version", action="version", version=f"mch {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate_parser = subparsers.add_parser("validate", help="check a comparison config for structural problems")
-    validate_parser.add_argument("config")
+    validate_parser.add_argument("config", help="YAML file with a `backends:` list")
     validate_parser.set_defaults(func=_cmd_validate)
 
     run_parser = subparsers.add_parser(
         "run", help="run the same input against every configured backend concurrently"
     )
-    run_parser.add_argument("config")
+    run_parser.add_argument("config", help=f"YAML file with a `backends:` list, e.g. {_EXAMPLE}")
     run_parser.add_argument("--input", required=True, help="JSON object, e.g. '{\"prompt\": \"a cat\"}'")
     output_format = run_parser.add_mutually_exclusive_group()
     output_format.add_argument("--json", action="store_true", help="print machine-readable JSON instead of a table")

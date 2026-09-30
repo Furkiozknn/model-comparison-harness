@@ -1,0 +1,44 @@
+# model-comparison-harness terminal demo: real commands, real output (mock backends only, no API key)
+# tarih: 2026-09-30T05:35:03+03:00
+# surum: mch 0.1.0 (depo kokunden `uv run mch`, HEAD a6f97b9 + calisma agaci)
+# hicbir satir elle yazilmadi; arac/demo-uret.py komutlari kosturup ciktiyi oldugu gibi yazar
+# tum latency degerleri MOCK backend'lerinin ayarli gecikmeleridir (0.1 / 1.2 / 0.3 s); gercek bir modelin olcumu degildir
+
+$ uv run mch --version
+mch 0.1.0
+[cikis kodu 0] (1.40 s)
+
+$ uv run mch validate examples/compare-mocks.yaml
+OK: 3 backend(s) configured: fast-mock, slow-mock, flaky-mock
+[cikis kodu 0] (1.11 s)
+
+$ uv run mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}'
+backend     status   latency (s)  summary
+----------  -------  -----------  --------------------------------------------------------------------------------
+fast-mock   success  0.114        {"note": "simulates a quick, cheap model", "params_received": {"prompt": "a c...
+slow-mock   success  1.214        {"note": "simulates a slower, higher-quality model", "params_received": {"pro...
+flaky-mock  error    0.302        ERROR: simulates a backend that is currently down or rate-limited
+
+fastest successful backend: fast-mock (0.114s)
+2 succeeded, 1 failed
+[cikis kodu 0] (2.34 s)
+
+$ uv run mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}' --timeout 0.5 --fail-on-error
+backend     status   latency (s)  summary
+----------  -------  -----------  --------------------------------------------------------------------------------
+fast-mock   success  0.111        {"note": "simulates a quick, cheap model", "params_received": {"prompt": "a c...
+slow-mock   error    0.516        ERROR: backend did not respond within 0.5s (harness timeout)
+flaky-mock  error    0.314        ERROR: simulates a backend that is currently down or rate-limited
+
+fastest successful backend: fast-mock (0.111s)
+1 succeeded, 2 failed
+[cikis kodu 1] (1.63 s)
+
+$ uv run mch run examples/yok.yaml --input '{}'
+error: no such file: examples\yok.yaml  (a YAML file with a `backends:` list; try examples/compare-mocks.yaml from a clone of the repo)
+[cikis kodu 1] (1.09 s)
+
+$ uv run mch run examples/compare-mocks.yaml --input '{prompt: x}'
+error: --input must be valid JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+hint: quote the whole object so the shell keeps the inner double quotes - bash/zsh: --input '{"prompt": "hi"}'; PowerShell 5.1: --input '{\"prompt\": \"hi\"}'
+[cikis kodu 1] (1.08 s)
