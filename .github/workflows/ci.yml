@@ -40,6 +40,8 @@ jobs:
       - name: README quick start
         run: |
           set -eu
+          uv run mch --version | grep -q '^mch [0-9]'
+          uv run mch --help | grep -q 'exit codes:'
           uv run mch validate examples/compare-mocks.yaml
           uv run mch validate examples/compare-with-gateway.yaml
           out="$(uv run mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}')"

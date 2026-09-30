@@ -326,3 +326,52 @@ def test_json_stdout_stays_parseable_when_something_prints_during_the_run(monkey
     rows = json.loads(captured.out)
     assert [row["backend"] for row in rows] == ["fast", "broken"]
     assert "Give Feedback" in captured.err
+
+
+# --- first-use messages: help, --version, hints -----------------------------
+
+def test_version_flag_prints_the_package_version(monkeypatch, capsys):
+    from model_comparison_harness import __version__
+
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, ["--version"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.strip() == f"mch {__version__}"
+
+
+def test_top_level_help_has_a_first_run_and_the_exit_codes(monkeypatch, capsys):
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, ["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "mch run examples/compare-mocks.yaml --input" in out
+    for code in ("0 ", "1 ", "2 ", "130"):
+        assert f"\n  {code}" in out
+
+
+def test_bad_input_json_hint_names_the_shell_quoting_pitfall(monkeypatch, capsys, config_file):
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, ["run", str(config_file), "--input", "{prompt: x}"])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "must be valid JSON" in err  # the original line is still first
+    assert "hint:" in err and "PowerShell" in err
+
+
+@pytest.mark.parametrize("cmd,prefix", [("run", "error: "), ("validate", "INVALID: ")])
+def test_missing_config_points_at_the_example(monkeypatch, capsys, tmp_path, cmd, prefix):
+    argv = [cmd, str(tmp_path / "yok.yaml")] + (["--input", "{}"] if cmd == "run" else [])
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, argv)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith(prefix + "no such file")
+    assert "examples/compare-mocks.yaml" in err
+
+
+def test_readme_first_run_commands_work_as_written(monkeypatch, capsys):
+    """The README's first ship-it-as-is commands, against the shipped example."""
+    root = Path(__file__).resolve().parent.parent
+    monkeypatch.chdir(root)
+    _run(monkeypatch, ["validate", "examples/compare-mocks.yaml"])
+    assert "OK: 3 backend(s)" in capsys.readouterr().out
