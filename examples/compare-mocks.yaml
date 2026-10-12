@@ -1,4 +1,4 @@
-# Example: compare two mock backends with different simulated latency.
+# Example: compare three mock backends: two with different simulated latency, one that always fails.
 # Try it:
 #   mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}'
 
