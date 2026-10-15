@@ -20,11 +20,14 @@ from typing import Any, Optional
 import httpx
 
 from .gateway_poll import (
+    GatewayContractError,
     GatewayHTTPError,
     classify_poll_body,
     expired_detail,
     is_expired_poll_response,
+    is_transient_poll_status,
     parse_submission,
+    poll_retry_delays,
     resolve_polling_url,
     submit_url,
 )
@@ -191,6 +194,38 @@ class GatewayBackend(Backend):
             raise BackendError(f"gateway returned a polling_url that leaves {self.base_url}: {polling_url!r}")
         return full
 
+    async def _poll_with_retry(
+        self, client: httpx.AsyncClient, poll_url: str, *, limit: int, deadline: float
+    ) -> tuple[httpx.Response, bytes]:
+        """One poll GET, retried on a network error or a 502/503/504.
+
+        A poll has no side effects, so asking again is safe; before this, one
+        dropped connection turned a working backend into a failed row. The
+        retry count and waits come from the vendored ``gateway_poll`` module.
+        A retry that would sleep past ``deadline`` is not attempted, so the
+        backend's timeout still holds.
+        """
+        delays = poll_retry_delays()
+        attempt = 0
+        while True:
+            # Each poll gets only the time remaining until `deadline`, not
+            # the full self.timeout again - otherwise one slow poll
+            # request near the end of the window can push total wall-clock
+            # time to roughly 2x the configured timeout before the
+            # deadline check in _run ever runs.
+            remaining = max(0.01, deadline - time.monotonic())
+            give_up = attempt == len(delays) or time.monotonic() + delays[attempt] >= deadline
+            try:
+                response, body = await _send_capped(client, "GET", poll_url, limit=limit, timeout=remaining)
+            except httpx.TransportError:
+                if give_up:
+                    raise
+            else:
+                if give_up or not is_transient_poll_status(response.status_code):
+                    return response, body
+            await asyncio.sleep(delays[attempt])
+            attempt += 1
+
     async def run(self, params: dict[str, Any]) -> dict[str, Any]:
         last_status: list[Any] = [None]
         try:
@@ -220,18 +255,12 @@ class GatewayBackend(Backend):
                 _job_id, polling_url = parse_submission(response.status_code, body_json, _decode(response, body))
             except GatewayHTTPError as exc:
                 raise BackendError(f"submission rejected ({exc.status_code}): {_clip(exc.body_text)}") from exc
-            except KeyError as exc:
-                raise BackendError(f"submission response is missing {exc.args[0]!r}: {_clip(json.dumps(body_json))}") from exc
+            except GatewayContractError as exc:
+                raise BackendError(f"submission response is missing {exc.field!r}: {_clip(json.dumps(body_json))}") from exc
             poll_url = self._poll_url(polling_url)
 
             while True:
-                # Each poll gets only the time remaining until `deadline`, not
-                # the full self.timeout again - otherwise one slow poll
-                # request near the end of the window can push total wall-clock
-                # time to roughly 2x the configured timeout before the
-                # deadline check below ever runs.
-                remaining = max(0.01, deadline - time.monotonic())
-                poll_response, poll_body = await _send_capped(client, "GET", poll_url, limit=limit, timeout=remaining)
+                poll_response, poll_body = await self._poll_with_retry(client, poll_url, limit=limit, deadline=deadline)
                 if is_expired_poll_response(poll_response.status_code):
                     try:
                         detail_json = json.loads(poll_body)
