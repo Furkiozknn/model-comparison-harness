@@ -16,6 +16,7 @@ from .backends import Backend, BackendError, GatewayBackend, HttpBackend, MockBa
 from .config import ConfigError, load_backends_from_dict, load_backends_from_file
 from .grading import GradeResult, GradingUnavailable, build_judge_chain, grade_result
 from .runner import ComparisonResult, run_comparison
+from .cost import CostModel, parse_cost
 
 __all__ = [
     "Backend",
@@ -28,6 +29,8 @@ __all__ = [
     "load_backends_from_file",
     "ComparisonResult",
     "run_comparison",
+    "CostModel",
+    "parse_cost",
     "GradeResult",
     "GradingUnavailable",
     "build_judge_chain",
