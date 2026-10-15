@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 `pyproject.toml` and in `project-meta.json` is the same; the release workflow
 (`.github/workflows/yayinla.yml`) refuses a tag that does not match it.
 
+## [Unreleased]
+
+### Added
+- Price tables: any backend may carry `cost: {per_request, per_second,
+  per_unit + unit_path, currency}`. `mch run` then adds a `cost` column (an
+  estimate for each successful call; `-` for an error, `?` when the unit
+  count is missing from the result) and a "cheapest successful backend"
+  line when all prices share a currency. `mch validate` checks the table.
+  `examples/compare-with-prices.yaml` shows all three pricing styles.
+
+### Changed
+- `--json` and `--csv` gain two trailing fields, `cost` and
+  `cost_currency` (empty without a price table). The existing fields keep
+  their names and order.
+
 ## [0.1.0] - 2026-09-25
 
 First release.
