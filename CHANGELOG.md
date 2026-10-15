@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 `pyproject.toml` and in `project-meta.json` is the same; the release workflow
 (`.github/workflows/yayinla.yml`) refuses a tag that does not match it.
 
+## [Unreleased]
+
+### Added
+- `mch run --repeat N` (1-1000) runs the comparison N times, one round
+  after another, and prints per backend: successes, p50/p95/min/max/stdev
+  latency over the successful runs, and failures by `error_type`. `--json`
+  carries the summary plus every round; `--csv` the summary rows.
+  `--fail-on-error` covers every round; `--rubric` with `--repeat` is a
+  usage error for now. `--repeat 1` (default) leaves the output unchanged.
+  Library: `run_repeated()`, `stats.summarize()`, `stats.percentile()`.
+
 ## [0.1.0] - 2026-09-25
 
 First release.
