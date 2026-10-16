@@ -27,6 +27,14 @@ This extends the same lesson [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nv
 
 It's part of a small ecosystem of focused repos for an AI creative platform — one of its backend types (`gateway`) speaks the same submit/poll HTTP contract as [`ai-job-gateway`](https://github.com/Furkiozknn/ai-job-gateway), so you can compare a mock/local model against a real one running behind that gateway with no code, just YAML.
 
+## Why not promptfoo?
+
+[promptfoo](https://github.com/promptfoo/promptfoo) evaluates prompts and models with automated, declarative evals. It compares providers side by side (OpenAI, Anthropic, Azure, Bedrock, Ollama and others), runs in CI, and also does red teaming.
+
+If your backends are LLM chat or completion APIs and you want test cases, assertions and a viewer, use promptfoo. It does far more than `mch`.
+
+What `mch` does differently: it sends one JSON input to N heterogeneous backends. These can be plain HTTP endpoints, async submit/poll job APIs (the `gateway` type) or mocks, so image, video or lip-sync services fit as well as text models. It reports latency, outcome and a typed `error_type` per backend, and `--fail-on-error` turns that into an exit code. It is a small Python CLI with offline mocks and no Node toolchain. It has no datasets and no repeats. The only scoring is the optional [`--rubric`](#model-graded-scoring---rubric) judge.
+
 ## Quick start
 
 Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/). The shipped example uses `mock` backends only, so this runs offline with no API key:
