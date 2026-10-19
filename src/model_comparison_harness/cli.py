@@ -16,7 +16,8 @@ from typing import Any
 from . import __version__
 from .config import ConfigError, load_backends_from_file
 from .grading import build_judge_chain, grading_extra_installed
-from .runner import ComparisonResult, run_comparison
+from .runner import ComparisonResult, run_comparison, run_repeated
+from .stats import BackendSummary, summarize
 
 
 def _positive_seconds(value: str) -> float:
@@ -147,6 +148,57 @@ def _format_table(results: list[ComparisonResult]) -> str:
     return "\n".join(lines)
 
 
+def _seconds(value: Any) -> str:
+    return "-" if value is None else f"{value:.3f}"
+
+
+def _format_summary_table(summaries: list[BackendSummary], repeat: int) -> str:
+    """One row per backend over every round of `--repeat`."""
+    headers = ["backend", "ok", "p50 (s)", "p95 (s)", "min (s)", "max (s)", "stdev (s)", "errors"]
+    rows = []
+    for s in summaries:
+        errors = ", ".join(f"{_printable(kind)} x{count}" for kind, count in s.errors.items()) or "-"
+        rows.append(
+            [
+                _printable(s.backend),
+                f"{s.successes}/{s.runs}",
+                _seconds(s.latency_p50),
+                _seconds(s.latency_p95),
+                _seconds(s.latency_min),
+                _seconds(s.latency_max),
+                _seconds(s.latency_stdev),
+                errors,
+            ]
+        )
+    widths = [max(len(h), *(len(row[i]) for row in rows)) for i, h in enumerate(headers)]
+    lines = ["  ".join(h.ljust(w) for h, w in zip(headers, widths)).rstrip()]
+    lines.append("  ".join("-" * w for w in widths))
+    for row in rows:
+        lines.append("  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip())
+
+    answered = [s for s in summaries if s.latency_p50 is not None]
+    if answered:
+        fastest = min(answered, key=lambda s: s.latency_p50)
+        lines.append("")
+        lines.append(f"fastest backend by p50: {_printable(fastest.backend)} ({fastest.latency_p50:.3f}s)")
+    lines.append(
+        f"{repeat} round(s) x {len(summaries)} backend(s); latency over successful runs only"
+    )
+    return "\n".join(lines)
+
+
+def _format_summary_csv(summaries: list[BackendSummary]) -> str:
+    buf = io.StringIO()
+    fieldnames = [f.name for f in fields(BackendSummary)]
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    for s in summaries:
+        row = asdict(s)
+        row["errors"] = json.dumps(row["errors"])
+        writer.writerow({k: ("" if v is None else v) for k, v in row.items()})
+    return buf.getvalue().rstrip("\n")
+
+
 _EXAMPLE = "examples/compare-mocks.yaml"
 
 _EPILOG = """\
@@ -222,6 +274,10 @@ def _cmd_run(args: argparse.Namespace) -> None:
         )
         raise SystemExit(1)
 
+    if args.repeat > 1:
+        _run_repeated(args, backends, params)
+        return
+
     # stdout carries only the table/JSON/CSV. Anything a backend or the judge
     # library prints while running (litellm prints a banner to stdout on every
     # failed judge call) goes to stderr, or `--json | jq` breaks.
@@ -237,6 +293,43 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
     if args.fail_on_error and any(r.status == "error" for r in results):
         raise SystemExit(1)
+
+
+def _run_repeated(args: argparse.Namespace, backends: list, params: dict[str, Any]) -> None:
+    """`--repeat N`: N sequential rounds, then one summary line per backend."""
+    with contextlib.redirect_stdout(sys.stderr):
+        rounds = asyncio.run(run_repeated(backends, params, repeat=args.repeat, timeout=args.timeout))
+    summaries = summarize(rounds)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "repeat": args.repeat,
+                    "summary": [asdict(s) for s in summaries],
+                    "runs": [[asdict(r) for r in round_results] for round_results in rounds],
+                },
+                indent=2,
+            )
+        )
+    elif args.csv:
+        print(_format_summary_csv(summaries))
+    else:
+        print(_format_summary_table(summaries, args.repeat))
+
+    if args.fail_on_error and any(r.status == "error" for round_results in rounds for r in round_results):
+        raise SystemExit(1)
+
+
+def _repeat_count(value: str) -> int:
+    """argparse type for --repeat: a whole number from 1 to 1000."""
+    try:
+        count = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {value!r}") from None
+    if not 1 <= count <= 1000:
+        raise argparse.ArgumentTypeError(f"must be between 1 and 1000, got {count}")
+    return count
 
 
 def main() -> None:
@@ -289,9 +382,25 @@ def main() -> None:
             "reported as a timeout error instead of blocking the whole comparison forever"
         ),
     )
+    run_parser.add_argument(
+        "--repeat",
+        type=_repeat_count,
+        default=1,
+        metavar="N",
+        help=(
+            "run the whole comparison N times, one round after another, and print per "
+            "backend: successes, p50/p95/min/max/stdev latency of the successful runs, and "
+            "failures by error type (default: 1, a single run)"
+        ),
+    )
     run_parser.set_defaults(func=_cmd_run)
 
     args = parser.parse_args()
+    if getattr(args, "repeat", 1) > 1 and getattr(args, "rubric", None) is not None:
+        run_parser.error(
+            "--rubric cannot be combined with --repeat yet (it would call the judge N times "
+            "per backend); grade a single run instead"
+        )
     try:
         args.func(args)
     except KeyboardInterrupt:

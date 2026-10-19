@@ -125,3 +125,26 @@ async def run_comparison(
     if not backends:
         return []
     return list(await asyncio.gather(*(_run_one(b, params, timeout, rubric) for b in backends)))
+
+
+async def run_repeated(
+    backends: list[Backend],
+    params: dict[str, Any],
+    *,
+    repeat: int,
+    timeout: Optional[float] = None,
+) -> list[list[ComparisonResult]]:
+    """Run the whole comparison ``repeat`` times and return every round.
+
+    Rounds run one after another; inside a round every backend runs
+    concurrently, exactly as in :func:`run_comparison`. Sequential rounds
+    keep a backend from competing with its own earlier requests, so each
+    latency sample means the same thing. Summarise with
+    ``stats.summarize``.
+    """
+    if repeat < 1:
+        raise ValueError(f"repeat must be at least 1, got {repeat}")
+    rounds = []
+    for _ in range(repeat):
+        rounds.append(await run_comparison(backends, params, timeout=timeout))
+    return rounds

@@ -18,7 +18,7 @@ Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installati
 | Use it when | Do not use it for |
 |---|---|
 | You have 2+ candidate backends for one capability and want to see, for the same input, which answers, how fast, and how they fail. | Load testing or absolute latency numbers: it fires one request per backend, and the timings include this process's overhead. |
-| You want a check in CI that a set of endpoints still answers (`--fail-on-error`, exit codes below). | Statistical comparison: there is no repeat or sweep over many prompts; pipe `--json`/`--csv` into your own script for that. |
+| You want a check in CI that a set of endpoints still answers (`--fail-on-error`, exit codes below). | A sweep over many prompts or datasets: `--repeat N` gives latency percentiles for one input, but there is no prompt matrix; pipe `--json`/`--csv` into your own script for that. |
 | You are wiring a new backend and want to see its output next to a known one, with a mock as a stand-in. | A production request pipeline: no retries, no fallback routing. |
 
 > **Windows PowerShell 5.1 and `--input`:** it strips the inner double quotes of a native argument. Write `--input '{\"prompt\": \"a cat\"}'` there (bash, zsh and PowerShell 7 take the form above). `mch` tells you this if the JSON does not parse.
@@ -26,6 +26,14 @@ Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installati
 This extends the same lesson [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nvidia-nim-mcp) already lives by (try more than one model, don't trust any single one to stay fast/available/alive) into an explicit, on-demand comparison tool: point it at N backends, fire the same input at all of them at once, see exactly how they stack up.
 
 It's part of a small ecosystem of focused repos for an AI creative platform — one of its backend types (`gateway`) speaks the same submit/poll HTTP contract as [`ai-job-gateway`](https://github.com/Furkiozknn/ai-job-gateway), so you can compare a mock/local model against a real one running behind that gateway with no code, just YAML.
+
+## Why not promptfoo?
+
+[promptfoo](https://github.com/promptfoo/promptfoo) evaluates prompts and models with automated, declarative evals. It compares providers side by side (OpenAI, Anthropic, Azure, Bedrock, Ollama and others), runs in CI, and also does red teaming.
+
+If your backends are LLM chat or completion APIs and you want test cases, assertions and a viewer, use promptfoo. It does far more than `mch`.
+
+What `mch` does differently: it sends one JSON input to N heterogeneous backends. These can be plain HTTP endpoints, async submit/poll job APIs (the `gateway` type) or mocks, so image, video or lip-sync services fit as well as text models. It reports latency, outcome and a typed `error_type` per backend, and `--fail-on-error` turns that into an exit code. It is a small Python CLI with offline mocks and no Node toolchain. It has no datasets and no repeats. The only scoring is the optional [`--rubric`](#model-graded-scoring---rubric) judge.
 
 ## Quick start
 
@@ -147,6 +155,7 @@ uv run mch run config.yaml --input '{"prompt": "..."}' --json           # machin
 uv run mch run config.yaml --input '{"prompt": "..."}' --csv            # CSV, e.g. `--csv > results.csv` for a spreadsheet
 uv run mch run config.yaml --input '{"prompt": "..."}' --fail-on-error  # exit 1 if any backend errored (useful in CI)
 uv run mch run config.yaml --input '{"prompt": "..."}' --timeout 10     # hard per-backend ceiling enforced by the harness
+uv run mch run config.yaml --input '{"prompt": "..."}' --repeat 20      # 20 rounds: p50/p95 latency and success rate per backend
 ```
 
 `--timeout` must be a number greater than 0. `--json` and `--csv` are mutually exclusive (pick one machine-readable format at a time); with neither, you get the human-readable table. stdout carries only that output: errors, and anything a backend or the judge library prints while running, go to stderr, so `--json | jq` and `--csv > file.csv` stay clean.
@@ -163,6 +172,31 @@ Exit codes, so a script or CI job can tell the cases apart:
 | `130` | Interrupted with Ctrl-C. In-flight backends are cancelled and their HTTP clients closed. |
 
 The `--json` and `--csv` fields are `backend, status, latency_seconds, result, error, error_type, grade, cost, cost_currency`, in that order. `grade` is `{"passed", "score", "reason"}` or empty, and `cost`/`cost_currency` are empty unless the backend has a [price table](#price-tables-cost). A test pins both, so a change to that shape can't slip in unnoticed.
+
+## Repeated runs (`--repeat N`)
+
+One run gives one latency sample per backend, and one sample is mostly noise: a cold connection, a provider's queue, a GC pause. `--repeat N` runs the whole comparison N times, one round after another, and prints one line per backend:
+
+```
+$ mch run examples/compare-mocks.yaml --input '{"prompt": "a cat riding a bike"}' --repeat 10
+backend     ok     p50 (s)  p95 (s)  min (s)  max (s)  stdev (s)  errors
+----------  -----  -------  -------  -------  -------  ---------  ----------------
+fast-mock   10/10  0.110    0.136    0.106    0.140    0.012      -
+slow-mock   10/10  1.208    1.231    1.202    1.232    0.012      -
+flaky-mock  0/10   -        -        -        -        -          BackendError x10
+
+fastest backend by p50: fast-mock (0.110s)
+10 round(s) x 3 backend(s); latency over successful runs only
+```
+
+<sub>Real output. The backends are mocks, so the spread is this process's scheduling on top of the configured delays.</sub>
+
+- **Rounds are sequential, backends inside a round are concurrent**, exactly like a single run. A backend therefore never competes with its own earlier request, and each sample means the same thing.
+- **Latency is over successful runs only.** A timeout's latency is the timeout and a refused connection's is near zero; mixing them in would describe the failure, not the backend. Failures are counted per `error_type` instead (`TimeoutError x2`).
+- **Percentiles interpolate linearly** between the closest ranks, the default in NumPy and R. With few rounds, p95 sits near the maximum; that is what ten samples can say, not a tail estimate. promptfoo's `--repeat` and hyperfine's warm-up-and-repeat idea are the models here, for any HTTP or async-job backend.
+- `--json` becomes `{"repeat": N, "summary": [...], "runs": [[...], ...]}`, where every round keeps the usual per-backend fields. `--csv` prints the summary rows (`backend, runs, successes, success_rate, latency_min, latency_p50, latency_p95, latency_max, latency_mean, latency_stdev, errors`). `--repeat 1` (the default) keeps the single-run output exactly as before.
+- `--fail-on-error` fails if any backend errored in any round. `--timeout` applies to every call. `--rubric` is refused with `--repeat` for now (exit 2), since it would call the judge N times per backend.
+- Library: `run_repeated(backends, params, repeat=N)` returns every round, and `stats.summarize(rounds)` returns a `BackendSummary` per backend.
 
 ## Model-graded scoring (`--rubric`)
 
@@ -236,7 +270,7 @@ uv sync --group dev
 uv run pytest
 ```
 
-Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 169 tests (`uv run pytest --collect-only -q` prints the current count).
+Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 214 tests (`uv run pytest --collect-only -q` prints the current count).
 
 The recording at the top is regenerated from real runs with `uv run --with pillow python arac/demo-uret.py` (needs ffmpeg; the font in `assets/yazi/` is JetBrains Mono, SIL OFL 1.1).
 
@@ -246,7 +280,7 @@ The recording at the top is regenerated from real runs with `uv run --with pillo
 
 - **Latency includes this process's own overhead** (event loop scheduling, JSON encode/decode) on top of each backend's real network/inference time — fine for relative "which is faster" comparisons between backends run side by side in the same process, not a substitute for a dedicated load-testing tool if you need absolute numbers.
 - **One input per run.** `mch run` fires a single `--input` payload at every backend once; there's no built-in sweep over a list of prompts or repeated trials for statistical confidence (score with `--json`/`--csv` output piped into your own script if you need that).
-- **No retries.** A backend that fails or times out is reported as a single failed row, not retried — matching this tool's job (see how backends behave *right now*, including failures) rather than a production request pipeline's job.
+- **No retries.** A backend that fails or times out is reported as a single failed row, not retried — matching this tool's job (see how backends behave *right now*, including failures) rather than a production request pipeline's job. One narrow exception: a `gateway` backend's *poll* GET is asked again after a network error or a `502`/`503`/`504`, up to three times (0.5 s, 1 s, 2 s, never past `timeout`). The waits count toward the reported latency. A poll has no side effects; the submission and the job are never repeated.
 - **`gateway` and `http` backends make real HTTP calls** to whatever `url:` you configure; nothing stops you from pointing a config at an untrusted or unintended endpoint, so treat comparison configs with the same care as any other file that names a URL to POST arbitrary `--input` JSON to. `headers:` values (API keys, for example) are sent as written, so keep a config that holds them out of git. Redirects are never followed, so those headers are not re-sent to a host the config does not name.
 - **Output is data from the backends.** The table escapes control characters (a server's error text cannot move the cursor, clear the screen or split a row) and `--json` escapes them too. `--csv` writes every cell as the backend produced it, which is what a CSV consumer expects; open CSV from an untrusted backend in a spreadsheet with the same care as any downloaded CSV.
 
