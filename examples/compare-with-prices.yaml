@@ -1,0 +1,34 @@
+# Three mock backends with price tables, to show the cost column offline.
+# The prices are made up; put your provider's real ones in your own config.
+#
+#   mch run examples/compare-with-prices.yaml --input '{"prompt": "a red sneaker"}'
+#
+# cost = per_request + per_second * latency + per_unit * (number at unit_path)
+backends:
+  - name: per-image
+    type: mock
+    delay: 0.2
+    result:
+      images: 1
+    cost:
+      per_request: 0.04          # e.g. a hosted image API priced per image
+
+  - name: gpu-seconds
+    type: mock
+    delay: 0.6
+    result:
+      images: 1
+    cost:
+      per_second: 0.0011         # e.g. a serverless GPU billed by wall time
+
+  - name: per-token
+    type: mock
+    delay: 0.1
+    result:
+      text: "a red sneaker on a white background"
+      usage:
+        total_tokens: 1250
+    cost:
+      per_unit: 0.000002         # price of one token
+      unit_path: usage.total_tokens
+      currency: USD

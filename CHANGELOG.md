@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 `pyproject.toml` and in `project-meta.json` is the same; the release workflow
 (`.github/workflows/yayinla.yml`) refuses a tag that does not match it.
 
+## [Unreleased]
+
+### Changed
+- `gateway` backend: a poll GET that hits a network error or a 502/503/504
+  is retried up to three times with backoff (0.5 s, 1 s, 2 s, never past
+  `timeout`). The submission and the job are never repeated.
+- Re-vendored `gateway_poll.py` from ai-job-gateway: a malformed 2xx
+  submission raises `GatewayContractError` instead of `assert`/`KeyError`.
+  The backend's error message is unchanged ("submission response is
+  missing 'id'").
+- `--json` and `--csv` gain two trailing fields, `cost` and
+  `cost_currency` (empty without a price table). The existing fields keep
+  their names and order.
+
+### Added
+- `mch run --repeat N` (1-1000) runs the comparison N times, one round
+  after another, and prints per backend: successes, p50/p95/min/max/stdev
+  latency over the successful runs, and failures by `error_type`. `--json`
+  carries the summary plus every round; `--csv` the summary rows.
+  `--fail-on-error` covers every round; `--rubric` with `--repeat` is a
+  usage error for now. `--repeat 1` (default) leaves the output unchanged.
+  Library: `run_repeated()`, `stats.summarize()`, `stats.percentile()`.
+- Price tables: any backend may carry `cost: {per_request, per_second,
+  per_unit + unit_path, currency}`. `mch run` then adds a `cost` column (an
+  estimate for each successful call; `-` for an error, `?` when the unit
+  count is missing from the result) and a "cheapest successful backend"
+  line when all prices share a currency. `mch validate` checks the table.
+  `examples/compare-with-prices.yaml` shows all three pricing styles.
+
 ## [0.1.0] - 2026-09-25
 
 First release.

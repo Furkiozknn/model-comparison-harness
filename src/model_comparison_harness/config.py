@@ -12,6 +12,7 @@ import httpx
 import yaml
 
 from .backends import DEFAULT_MAX_RESPONSE_BYTES, Backend, GatewayBackend, HttpBackend, MockBackend
+from .cost import CostConfigError, parse_cost
 
 # gateway_poll.submit_url builds the request as f"{base_url}/v1/{capability}"
 # with no encoding or escaping - an unrestricted capability string is a
@@ -32,7 +33,7 @@ class ConfigError(Exception):
 # Every field each backend type accepts. Anything else is rejected rather
 # than silently ignored: a typo such as `dealy: 3` or `timout: 5` used to pass
 # `mch validate` and then quietly run with the default value instead.
-_COMMON_FIELDS = {"name", "type"}
+_COMMON_FIELDS = {"name", "type", "cost"}
 _ALLOWED_FIELDS: dict[str, set[str]] = {
     "mock": _COMMON_FIELDS | {"delay", "result", "should_fail", "failure_message"},
     "gateway": _COMMON_FIELDS | {"url", "capability", "timeout", "poll_interval", "max_response_bytes"},
@@ -190,7 +191,17 @@ def load_backends_from_dict(data: dict[str, Any]) -> list[Backend]:
                 f"backend {name!r} (type={backend_type}): unknown field {field!r}{hint} "
                 f"(allowed: {', '.join(sorted(allowed))})"
             )
-        backends.append(builder(name, spec))
+        cost_spec = spec.get("cost")
+        builder_spec = {k: v for k, v in spec.items() if k != "cost"}
+        backend = builder(name, builder_spec)
+        if cost_spec is not None:
+            try:
+                # An attribute on the instance, so a custom backend type
+                # gets a price table without knowing about it.
+                backend.cost = parse_cost(cost_spec)
+            except CostConfigError as exc:
+                raise ConfigError(f"{_where(name, spec)}: {exc}") from None
+        backends.append(backend)
 
     return backends
 

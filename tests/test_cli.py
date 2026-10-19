@@ -103,7 +103,7 @@ def test_run_csv_output(monkeypatch, capsys, config_file):
     out = capsys.readouterr().out
     reader = csv.DictReader(io.StringIO(out))
     rows = list(reader)
-    assert reader.fieldnames == ["backend", "status", "latency_seconds", "result", "error", "error_type", "grade"]
+    assert reader.fieldnames == ["backend", "status", "latency_seconds", "result", "error", "error_type", "grade", "cost", "cost_currency"]
     assert all(row["grade"] == "" for row in rows)  # no --rubric, so no grade cell
     assert {row["backend"] for row in rows} == {"fast", "broken"}
     fast_row = next(r for r in rows if r["backend"] == "fast")
@@ -245,7 +245,7 @@ def test_ctrl_c_exits_130_without_a_traceback(monkeypatch, capsys, config_file):
 # Scripts parse --json/--csv. Renaming, adding or reordering a field is a
 # breaking change for them, so it has to show up as a failing test here.
 
-_RESULT_FIELDS = ["backend", "status", "latency_seconds", "result", "error", "error_type", "grade"]
+_RESULT_FIELDS = ["backend", "status", "latency_seconds", "result", "error", "error_type", "grade", "cost", "cost_currency"]
 
 
 def test_json_output_schema_is_pinned(monkeypatch, capsys, config_file):

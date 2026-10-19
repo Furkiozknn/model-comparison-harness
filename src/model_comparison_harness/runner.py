@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from .backends import Backend
+from .cost import CostModel
 from .grading import GradeResult, GradingUnavailable, grade_result
 
 
@@ -23,6 +24,11 @@ class ComparisonResult:
     # "BackendError" - lets scripts branch on failure *kind* without
     # string-matching `error`.
     grade: Optional[GradeResult] = None
+    #: Estimated cost of this call from the backend's `cost:` price table
+    #: (see cost.py); None when the backend has none, the call failed, or a
+    #: unit count the price needs was missing from the result.
+    cost: Optional[float] = None
+    cost_currency: Optional[str] = None
 
 
 async def _run_one(
@@ -79,12 +85,17 @@ async def _run_one(
             # comparison over one tier" rule as the backend call itself.
             grade = GradeResult(passed=False, score=0.0, reason=f"grading failed: {exc}")
 
+    cost_model: Optional[CostModel] = getattr(backend, "cost", None)
+    cost = cost_model.estimate(result, latency_seconds) if cost_model is not None else None
+
     return ComparisonResult(
         backend=backend.name,
         status="success",
         latency_seconds=latency_seconds,
         result=result,
         grade=grade,
+        cost=cost,
+        cost_currency=cost_model.currency if cost_model is not None else None,
     )
 
 
@@ -114,3 +125,26 @@ async def run_comparison(
     if not backends:
         return []
     return list(await asyncio.gather(*(_run_one(b, params, timeout, rubric) for b in backends)))
+
+
+async def run_repeated(
+    backends: list[Backend],
+    params: dict[str, Any],
+    *,
+    repeat: int,
+    timeout: Optional[float] = None,
+) -> list[list[ComparisonResult]]:
+    """Run the whole comparison ``repeat`` times and return every round.
+
+    Rounds run one after another; inside a round every backend runs
+    concurrently, exactly as in :func:`run_comparison`. Sequential rounds
+    keep a backend from competing with its own earlier requests, so each
+    latency sample means the same thing. Summarise with
+    ``stats.summarize``.
+    """
+    if repeat < 1:
+        raise ValueError(f"repeat must be at least 1, got {repeat}")
+    rounds = []
+    for _ in range(repeat):
+        rounds.append(await run_comparison(backends, params, timeout=timeout))
+    return rounds
