@@ -27,6 +27,14 @@ This extends the same lesson [`nvidia-nim-mcp`](https://github.com/Furkiozknn/nv
 
 It's part of a small ecosystem of focused repos for an AI creative platform — one of its backend types (`gateway`) speaks the same submit/poll HTTP contract as [`ai-job-gateway`](https://github.com/Furkiozknn/ai-job-gateway), so you can compare a mock/local model against a real one running behind that gateway with no code, just YAML.
 
+## Why not promptfoo?
+
+[promptfoo](https://github.com/promptfoo/promptfoo) evaluates prompts and models with automated, declarative evals. It compares providers side by side (OpenAI, Anthropic, Azure, Bedrock, Ollama and others), runs in CI, and also does red teaming.
+
+If your backends are LLM chat or completion APIs and you want test cases, assertions and a viewer, use promptfoo. It does far more than `mch`.
+
+What `mch` does differently: it sends one JSON input to N heterogeneous backends. These can be plain HTTP endpoints, async submit/poll job APIs (the `gateway` type) or mocks, so image, video or lip-sync services fit as well as text models. It reports latency, outcome and a typed `error_type` per backend, and `--fail-on-error` turns that into an exit code. It is a small Python CLI with offline mocks and no Node toolchain. It has no datasets and no repeats. The only scoring is the optional [`--rubric`](#model-graded-scoring---rubric) judge.
+
 ## Quick start
 
 Needs Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/). The shipped example uses `mock` backends only, so this runs offline with no API key:
@@ -219,7 +227,7 @@ uv sync --group dev
 uv run pytest
 ```
 
-Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 168 tests (`uv run pytest --collect-only -q` prints the current count).
+Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 195 tests (`uv run pytest --collect-only -q` prints the current count).
 
 The recording at the top is regenerated from real runs with `uv run --with pillow python arac/demo-uret.py` (needs ffmpeg; the font in `assets/yazi/` is JetBrains Mono, SIL OFL 1.1).
 
@@ -229,7 +237,7 @@ The recording at the top is regenerated from real runs with `uv run --with pillo
 
 - **Latency includes this process's own overhead** (event loop scheduling, JSON encode/decode) on top of each backend's real network/inference time — fine for relative "which is faster" comparisons between backends run side by side in the same process, not a substitute for a dedicated load-testing tool if you need absolute numbers.
 - **One input per run.** `mch run` fires a single `--input` payload at every backend once; there's no built-in sweep over a list of prompts or repeated trials for statistical confidence (score with `--json`/`--csv` output piped into your own script if you need that).
-- **No retries.** A backend that fails or times out is reported as a single failed row, not retried — matching this tool's job (see how backends behave *right now*, including failures) rather than a production request pipeline's job.
+- **No retries.** A backend that fails or times out is reported as a single failed row, not retried — matching this tool's job (see how backends behave *right now*, including failures) rather than a production request pipeline's job. One narrow exception: a `gateway` backend's *poll* GET is asked again after a network error or a `502`/`503`/`504`, up to three times (0.5 s, 1 s, 2 s, never past `timeout`). The waits count toward the reported latency. A poll has no side effects; the submission and the job are never repeated.
 - **`gateway` and `http` backends make real HTTP calls** to whatever `url:` you configure; nothing stops you from pointing a config at an untrusted or unintended endpoint, so treat comparison configs with the same care as any other file that names a URL to POST arbitrary `--input` JSON to. `headers:` values (API keys, for example) are sent as written, so keep a config that holds them out of git. Redirects are never followed, so those headers are not re-sent to a host the config does not name.
 - **Output is data from the backends.** The table escapes control characters (a server's error text cannot move the cursor, clear the screen or split a row) and `--json` escapes them too. `--csv` writes every cell as the backend produced it, which is what a CSV consumer expects; open CSV from an untrusted backend in a spreadsheet with the same care as any downloaded CSV.
 

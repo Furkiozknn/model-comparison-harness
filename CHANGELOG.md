@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- `gateway` backend: a poll GET that hits a network error or a 502/503/504
+  is retried up to three times with backoff (0.5 s, 1 s, 2 s, never past
+  `timeout`). The submission and the job are never repeated.
+- Re-vendored `gateway_poll.py` from ai-job-gateway: a malformed 2xx
+  submission raises `GatewayContractError` instead of `assert`/`KeyError`.
+  The backend's error message is unchanged ("submission response is
+  missing 'id'").
+
 ### Added
 - `mch run --repeat N` (1-1000) runs the comparison N times, one round
   after another, and prints per backend: successes, p50/p95/min/max/stdev
