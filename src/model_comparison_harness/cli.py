@@ -64,9 +64,27 @@ def _printable(text: str) -> str:
     return "".join(c if c.isprintable() else repr(c)[1:-1] for c in text)
 
 
+def _money(value: float) -> str:
+    """Enough digits for per-token prices without drowning per-image ones."""
+    return f"{value:.4f}" if value >= 0.01 or value == 0 else f"{value:.6f}"
+
+
+def _cost_cell(r: ComparisonResult) -> str:
+    if r.cost_currency is None:
+        return "-"  # no price table, or the call failed
+    if r.cost is None:
+        return "?"  # priced per unit, but the result had no unit count
+    return f"{_money(r.cost)} {_printable(r.cost_currency)}"
+
+
 def _format_table(results: list[ComparisonResult]) -> str:
     graded = any(r.grade is not None for r in results)
-    headers = ["backend", "status", "latency (s)", "summary"]
+    # Only once a config has a price table: otherwise the table is unchanged.
+    priced = any(r.cost_currency is not None for r in results)
+    headers = ["backend", "status", "latency (s)"]
+    if priced:
+        headers.append("cost")
+    headers.append("summary")
     if graded:
         headers.append("grade")
 
@@ -79,7 +97,10 @@ def _format_table(results: list[ComparisonResult]) -> str:
         summary = _printable(summary)
         if len(summary) > 80:
             summary = summary[:77] + "..."
-        row = [_printable(r.backend), r.status, f"{r.latency_seconds:.3f}", summary]
+        row = [_printable(r.backend), r.status, f"{r.latency_seconds:.3f}"]
+        if priced:
+            row.append(_cost_cell(r))
+        row.append(summary)
         if graded:
             if r.grade is None:
                 row.append("-")
@@ -102,6 +123,17 @@ def _format_table(results: list[ComparisonResult]) -> str:
     if fastest_success:
         lines.append("")
         lines.append(f"fastest successful backend: {_printable(fastest_success.backend)} ({fastest_success.latency_seconds:.3f}s)")
+
+    priced_successes = [r for r in results if r.status == "success" and r.cost is not None]
+    currencies = {r.cost_currency for r in priced_successes}
+    if priced_successes and len(currencies) == 1:
+        cheapest = min(priced_successes, key=lambda r: r.cost)
+        lines.append(
+            f"cheapest successful backend: {_printable(cheapest.backend)} "
+            f"({_money(cheapest.cost)} {_printable(cheapest.cost_currency)})"
+        )
+    elif len(currencies) > 1:
+        lines.append("cheapest successful backend: not compared (the price tables use different currencies)")
 
     if graded:
         best_graded = max(

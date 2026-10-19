@@ -93,11 +93,54 @@ One backend erroring never hides the other results — the whole point is seeing
 | `gateway` | `POST /v1/{capability}` + poll, the same submit/poll contract [`ai-job-gateway`](https://github.com/Furkiozknn/ai-job-gateway) implements. Works against any server implementing that same shape, not only that specific repo. The `polling_url` the server returns must be a path on the configured host and port; anything else is an error, not a request. | `url`, `capability` | `timeout` (60), `poll_interval` (0.3), `max_response_bytes` (10485760) |
 | `http` | The simplest real-world case: `POST` params to a fixed URL, treat the JSON response body as the result directly — no submit/poll assumed. Fits any synchronous request/response API. Redirects are reported as errors, not followed; a body over `max_response_bytes` is cut off and reported. | `url` | `headers`, `timeout` (60), `max_response_bytes` (10485760) |
 
-Every backend also takes `name` (unique) and `type`. `mch validate` checks each field's type and range and rejects unknown fields, so a typo like `dealy: 3` is an error with a "did you mean 'delay'?" hint instead of a silently ignored line. `url` must be an absolute `http://` or `https://` URL.
+Every backend also takes `name` (unique), `type` and an optional `cost:` price table ([below](#price-tables-cost)). `mch validate` checks each field's type and range and rejects unknown fields, so a typo like `dealy: 3` is an error with a "did you mean 'delay'?" hint instead of a silently ignored line. `url` must be an absolute `http://` or `https://` URL.
 
 For `gateway` and `http`, `timeout` is a total wall-clock ceiling on the whole call (submission, every poll, reading every body), not only a per-read limit, so a server that trickles its response in slowly still stops at `timeout`. When it runs out, an `http` backend reports `error_type: TimeoutError` and a `gateway` backend reports `BackendError` with `did not finish within ...s (last status: ...)`. `max_response_bytes` caps every response body the backend reads; a larger one is cut off and reported instead of being held in memory.
 
 See `examples/compare-with-gateway.yaml` for a config comparing a local mock against a real running `ai-job-gateway` server.
+
+## Price tables (`cost:`)
+
+The fastest backend is not the answer if it costs ten times more. Any backend can carry a `cost:` mapping, and `mch run` then shows an estimated cost per call and the cheapest successful backend. promptfoo reports cost for LLM token pricing; the backends here are as often priced per image or per GPU-second, so the table has all three terms:
+
+```yaml
+# examples/compare-with-prices.yaml (excerpt)
+  - name: per-image
+    type: mock
+    cost:
+      per_request: 0.04          # flat price per call, e.g. one image
+  - name: gpu-seconds
+    type: mock
+    cost:
+      per_second: 0.0011         # billed by the call's wall time
+  - name: per-token
+    type: mock
+    cost:
+      per_unit: 0.000002         # price of one unit...
+      unit_path: usage.total_tokens   # ...counted at this path in the result
+      currency: USD              # a label; default USD
+```
+
+```
+$ mch run examples/compare-with-prices.yaml --input '{"prompt": "a red sneaker"}'
+backend      status   latency (s)  cost          summary
+-----------  -------  -----------  ------------  --------------------------------------------------------------------------------
+per-image    success  0.202        0.0400 USD    {"images": 1, "params_received": {"prompt": "a red sneaker"}}
+gpu-seconds  success  0.606        0.000667 USD  {"images": 1, "params_received": {"prompt": "a red sneaker"}}
+per-token    success  0.107        0.002500 USD  {"text": "a red sneaker on a white background", "usage": {"total_tokens": 125...
+
+fastest successful backend: per-token (0.107s)
+cheapest successful backend: gpu-seconds (0.000667 USD)
+3 succeeded, 0 failed
+```
+
+<sub>Real output. Mock backends with made-up prices: put your provider's real ones in your own config.</sub>
+
+- **cost = `per_request` + `per_second` × latency + `per_unit` × the number at `unit_path`.** The terms can be combined. `unit_path` is a dotted path into the result; a numeric segment indexes a list (`images.0.megapixels`).
+- **Successful calls only.** Whether a provider bills a failed call varies, so an error row shows `-` rather than a guess. If `unit_path` does not lead to a number, the cell shows `?`: the cost is unknown, never computed without that part.
+- **These are estimates from your table.** The latency term uses the harness's wall time, which includes this process's overhead (see Limitations). It is not the provider's invoice.
+- "Cheapest" is only named when every priced backend uses the same `currency`. A config without any `cost:` prints exactly the table it printed before.
+- `mch validate` checks the table: unknown keys (with did-you-mean), negative or non-numeric prices, `per_unit` without `unit_path` and the reverse, and a table that sets no price at all.
 
 ## The CLI
 
@@ -128,7 +171,7 @@ Exit codes, so a script or CI job can tell the cases apart:
 | `2` | Command-line usage error from argparse, e.g. a missing `--input` or `--timeout 0`. |
 | `130` | Interrupted with Ctrl-C. In-flight backends are cancelled and their HTTP clients closed. |
 
-The `--json` and `--csv` fields are `backend, status, latency_seconds, result, error, error_type, grade`, in that order, and `grade` is `{"passed", "score", "reason"}` or empty. A test pins both, so a change to that shape can't slip in unnoticed.
+The `--json` and `--csv` fields are `backend, status, latency_seconds, result, error, error_type, grade, cost, cost_currency`, in that order. `grade` is `{"passed", "score", "reason"}` or empty, and `cost`/`cost_currency` are empty unless the backend has a [price table](#price-tables-cost). A test pins both, so a change to that shape can't slip in unnoticed.
 
 ## Repeated runs (`--repeat N`)
 
@@ -227,7 +270,7 @@ uv sync --group dev
 uv run pytest
 ```
 
-Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 195 tests (`uv run pytest --collect-only -q` prints the current count).
+Fully async (`pytest-asyncio`), no real network needed — `gateway` and `http` backends are tested against `httpx.MockTransport`. One test specifically asserts backends actually run concurrently (three 0.2s-delay mocks finish in well under 0.6s total), since sequential execution would make the whole comparison's latency numbers meaningless. 214 tests (`uv run pytest --collect-only -q` prints the current count).
 
 The recording at the top is regenerated from real runs with `uv run --with pillow python arac/demo-uret.py` (needs ffmpeg; the font in `assets/yazi/` is JetBrains Mono, SIL OFL 1.1).
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 from .backends import Backend, BackendError, GatewayBackend, HttpBackend, MockBackend
 from .config import ConfigError, load_backends_from_dict, load_backends_from_file
 from .grading import GradeResult, GradingUnavailable, build_judge_chain, grade_result
+from .cost import CostModel, parse_cost
 from .runner import ComparisonResult, run_comparison, run_repeated
 from .stats import BackendSummary, percentile, summarize
 
@@ -33,6 +34,8 @@ __all__ = [
     "BackendSummary",
     "percentile",
     "summarize",
+    "CostModel",
+    "parse_cost",
     "GradeResult",
     "GradingUnavailable",
     "build_judge_chain",

@@ -16,6 +16,9 @@ All notable changes to this project are documented here. The format follows
   submission raises `GatewayContractError` instead of `assert`/`KeyError`.
   The backend's error message is unchanged ("submission response is
   missing 'id'").
+- `--json` and `--csv` gain two trailing fields, `cost` and
+  `cost_currency` (empty without a price table). The existing fields keep
+  their names and order.
 
 ### Added
 - `mch run --repeat N` (1-1000) runs the comparison N times, one round
@@ -25,6 +28,12 @@ All notable changes to this project are documented here. The format follows
   `--fail-on-error` covers every round; `--rubric` with `--repeat` is a
   usage error for now. `--repeat 1` (default) leaves the output unchanged.
   Library: `run_repeated()`, `stats.summarize()`, `stats.percentile()`.
+- Price tables: any backend may carry `cost: {per_request, per_second,
+  per_unit + unit_path, currency}`. `mch run` then adds a `cost` column (an
+  estimate for each successful call; `-` for an error, `?` when the unit
+  count is missing from the result) and a "cheapest successful backend"
+  line when all prices share a currency. `mch validate` checks the table.
+  `examples/compare-with-prices.yaml` shows all three pricing styles.
 
 ## [0.1.0] - 2026-09-25
 
